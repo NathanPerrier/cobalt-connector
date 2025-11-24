@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { RedisService } from '../redis/redis.service';
+import { StateService, ChatMode } from '../state/state.service';
 import axios from 'axios';
 
 @Injectable()
@@ -8,21 +8,34 @@ export class OrchestratorService {
   private readonly logger = new Logger(OrchestratorService.name);
 
   constructor(
-    private readonly redisService: RedisService,
+    private readonly stateService: StateService,
     private readonly configService: ConfigService,
   ) {}
 
   async handleUserMessage(sessionId: string, message: string) {
     this.logger.log(`Handling message for session ${sessionId}: ${message}`);
 
-    const session = await this.redisService.getSession(sessionId);
+    const state = await this.stateService.getSessionState(sessionId);
 
-    if (session && session.waiting_webhook_url) {
+    // We route to n8n regardless of mode, letting the workflow handle the logic based on the 'mode' field.
+    // if (state.mode === ChatMode.AGENT) {
+    //   this.logger.log(`Routing message to Live Agent for session ${sessionId}`);
+    //   // TODO: Implement Firebase/Live Agent routing
+    //   return;
+    // }
+
+    // Default to BOT mode logic
+    if (state.waiting_webhook_url) {
       this.logger.log(`Resuming workflow for session ${sessionId}`);
       try {
-        await axios.post(session.waiting_webhook_url, {
+        await axios.post(state.waiting_webhook_url, {
           sessionId,
           message,
+          mode: state.mode,
+          endchat: state.metadata?.endchat || false,
+          emailRequested: state.metadata?.emailRequested || false,
+          liveAgentRequested: state.metadata?.liveAgentRequested || false,
+          ...state.metadata,
         });
       } catch (error) {
         this.logger.error(`Failed to resume workflow: ${error.message}`);
@@ -37,6 +50,11 @@ export class OrchestratorService {
         await axios.post(startWebhookUrl, {
           sessionId,
           message,
+          mode: state.mode,
+          endchat: state.metadata?.endchat || false,
+          emailRequested: state.metadata?.emailRequested || false,
+          liveAgentRequested: state.metadata?.liveAgentRequested || false,
+          ...state.metadata,
         });
       } catch (error) {
         this.logger.error(`Failed to start workflow: ${error.message}`);

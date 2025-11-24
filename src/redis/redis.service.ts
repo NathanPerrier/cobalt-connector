@@ -14,7 +14,11 @@ export class RedisService {
   }
 
   async setSession(socketId: string, data: any): Promise<void> {
-    await this.redis.set(`session:${socketId}`, JSON.stringify(data));
+    // Merge with existing data if possible, or just overwrite
+    // For now, simple overwrite or merge logic
+    const existing = await this.getSession(socketId) || {};
+    const merged = { ...existing, ...data };
+    await this.redis.set(`session:${socketId}`, JSON.stringify(merged));
   }
 
   async getSession(socketId: string): Promise<any> {

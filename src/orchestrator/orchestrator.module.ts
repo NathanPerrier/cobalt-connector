@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { OrchestratorService } from './orchestrator.service';
-import { RedisModule } from '../redis/redis.module';
+import { StateModule } from '../state/state.module';
 
 @Module({
-  imports: [RedisModule],
+  imports: [StateModule],
   providers: [OrchestratorService],
   exports: [OrchestratorService],
 })

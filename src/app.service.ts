@@ -1,189 +1,287 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import * as admin from 'firebase-admin';
-import { Observable, Subject } from 'rxjs';
+import { Injectable, Logger, MessageEvent } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
+import { ConfigService } from '@nestjs/config';
+import { createActor, ActorRefFrom } from 'xstate';
+import { sessionMachine } from './machines/session.machine';
+import { Observable, ReplaySubject, firstValueFrom } from 'rxjs';
+import { map } from 'rxjs/operators';
+import { randomUUID } from 'crypto';
 
 @Injectable()
-export class AppService implements OnModuleInit {
-  private db: admin.firestore.Firestore;
-  private activeObservers = new Map<string, any>();
+export class AppService {
+  private readonly logger = new Logger(AppService.name);
+  private sessions = new Map<
+    string,
+    { actor: ActorRefFrom<typeof sessionMachine>; stream: ReplaySubject<any> }
+  >();
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly configService: ConfigService,
+  ) {}
 
-  onModuleInit() {
-    // Initialize Firebase Admin
-    // Ensure GOOGLE_APPLICATION_CREDENTIALS env var is set or pass serviceAccount object
-    /*
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-      });
+  private getN8nUrl(key: string): string {
+    const url = this.configService.get<string>(key);
+    if (!url) {
+      this.logger.warn(`Environment variable ${key} is not set.`);
+      return '';
     }
-    this.db = admin.firestore();
-    */
-    console.log('Firebase disabled for now');
+    return url;
   }
 
-  /**
-   * Trigger an action (send message, button click, etc.)
-   * This calls the n8n webhook to process the logic.
-   */
-  async triggerAction(payload: any) {
-    const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL; // e.g., https://n8n.yourdomain.com/webhook/...
-    if (!n8nWebhookUrl) {
-      throw new Error('N8N_WEBHOOK_URL is not defined');
+  getOrCreateSession(sessionId: string) {
+    if (this.sessions.has(sessionId)) {
+      return this.sessions.get(sessionId)!;
     }
 
+    const stream = new ReplaySubject<any>(10);
+    const actor = createActor(sessionMachine);
+
+    actor.subscribe((snapshot) => {
+      this.logger.log(`Session ${sessionId} state: ${snapshot.value}`);
+
+      // Emit state update to frontend
+      stream.next({
+        type: 'state_update',
+        state: snapshot.value,
+        context: snapshot.context,
+      });
+
+      // Handle N8N calls based on state
+      this.handleStateSideEffects(
+        sessionId,
+        snapshot.value as string,
+        snapshot.context,
+      );
+    });
+
+    actor.start();
+    this.sessions.set(sessionId, { actor, stream });
+    return { actor, stream };
+  }
+
+  private async handleStateSideEffects(
+    sessionId: string,
+    state: string,
+    context: any,
+  ) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    const { actor } = session;
+    const payload = { sessionId, context };
+
+    switch (state) {
+      case 'live_agent_queue':
+        this.callN8n(this.getN8nUrl('N8N_LIVE_AGENT_QUEUE_URL'), payload);
+        break;
+      case 'email_transcript_processing':
+        this.callN8n(this.getN8nUrl('N8N_TRANSCRIPT_URL'), payload)
+          .then(() => actor.send({ type: 'SUCCESS' }))
+          .catch(() => actor.send({ type: 'FAILURE' }));
+        break;
+      case 'timeout':
+        this.callN8n(this.getN8nUrl('N8N_TIMEOUT_URL'), payload);
+        break;
+      default:
+        break;
+    }
+  }
+
+  async handleTrigger(sessionId: string, payload: any) {
+    const session = this.getOrCreateSession(sessionId);
+    if (!session) return;
+
+    const { actor, stream } = session;
+    let { type, ...data } = payload;
+
+    // Infer type from message content if missing
+    if (!type && data.message) {
+        if (data.message.startsWith('__') && data.message.endsWith('__')) {
+             type = data.message;
+        } else {
+             type = 'USER_MESSAGE';
+        }
+    }
+
+    if (type && typeof type === 'string' && type.trim().toLowerCase() === '__endchat__') {
+        type = 'END_CMD';
+    }
+
+    this.logger.log(`Received trigger for ${sessionId}: ${type}`);
+
+    if (type === 'SURVEY_SUBMITTED') {
+      const url = this.getN8nUrl('N8N_ANALYTICS_URL');
+      if (url) {
+        await this.callN8n(url, { sessionId, ...data });
+      }
+      // @ts-ignore
+      actor.send({ type, ...data });
+      return;
+    }
+
+    // Forward event to state machine
+    if (type) {
+      // @ts-ignore - dynamic event dispatch
+      actor.send({ type, ...data });
+    }
+
+    if (type === 'USER_MESSAGE') {
+      const currentState = actor.getSnapshot().value;
+      let url = '';
+
+      if (currentState === 'live_agent_active') {
+        url = this.getN8nUrl('N8N_LIVE_AGENT_ACTIVE_URL');
+      } else {
+        // Default to LLM for idle or bot_active
+        url = this.getN8nUrl('N8N_LLM_URL');
+      }
+
+      if (url) {
+        // Timeout logic: Send a message if N8N takes too long
+        const timeoutMs = 15000;
+        let timedOut = false;
+        const timeoutId = setTimeout(() => {
+          timedOut = true;
+          stream.next({
+            type: 'bot_message',
+            data: {
+              plainText:
+                "Sorry, I'm taking a bit longer than expected. Please try again.",
+              messageId: randomUUID()
+            },
+          });
+        }, timeoutMs);
+
+        this.callN8n(url, { sessionId, message: data.message, ...data }).then(
+          (response) => {
+            if (timedOut) return;
+            clearTimeout(timeoutId);
+
+            const messageId = response?.messageId || randomUUID();
+            const finalResponse = { ...response, messageId };
+
+            // Emit response to stream
+            stream.next({ type: 'bot_message', data: finalResponse });
+
+            // Check for escalation in response if handled by N8N
+            if (response && response.escalate) {
+              actor.send({ type: 'ESCALATION_TRIGGER' });
+            }
+          },
+        );
+      }
+    } else if (type === '__greeting__') {
+      const url = this.getN8nUrl('N8N_GREETING_URL');
+      if (url) {
+        this.callN8n(url, { sessionId }).then((response) => {
+          const messageId = response?.messageId || randomUUID();
+          const finalResponse = { ...response, messageId };
+          stream.next({ type: 'bot_message', data: finalResponse });
+        });
+      }
+    } else if (type === 'END_CMD') {
+         const url = this.getN8nUrl('N8N_END_CHAT_URL');
+         if (url) {
+             this.callN8n(url, { sessionId }).then(response => {
+                 const messageId = response?.messageId || randomUUID();
+                 const finalResponse = {
+                     ...(response || {}),
+                     messageId,
+                     meta: {
+                         ...(response?.meta || {}),
+                         chatEnded: true
+                     }
+                 };
+                 stream.next({ type: 'bot_message', data: finalResponse });
+             });
+         }
+    }
+  }
+
+  private async callN8n(url: string, payload: any) {
     try {
-      // Forward the payload to n8n
-      // n8n will then update Firestore or perform other actions
+      this.logger.log(`Calling N8N: ${url}`);
       const response = await firstValueFrom(
-        this.httpService.post(n8nWebhookUrl, payload),
+        this.httpService.post(url, payload),
       );
       return response.data;
     } catch (error) {
-      console.error('Error calling n8n:', error.message);
-      throw error;
+      this.logger.error(`Error calling N8N: ${error.message}`);
+      // Handle error, maybe send FAILURE event to machine?
+      return null;
     }
   }
 
-  /**
-   * Save a message to Firestore
-   */
-  async saveMessage(sessionId: string, message: any) {
-    try {
-      /*
-      const docRef = this.db.collection('conversations').doc(sessionId);
-      await docRef.collection('messages').add({
-        ...message,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      */
-      console.log(`[Mock] Saved message for session ${sessionId}:`, message);
-
-      // Emit to active stream if exists
-      const observer = this.activeObservers.get(sessionId) as Subject<any> | undefined;
-      if (observer) {
-        console.log(`[Mock] Emitting to observer for session ${sessionId}`);
-
-        // Format message for frontend
-        const typedMessage = message as Record<string, any>;
-
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        let type = typedMessage['type'];
-        
-        // If type is missing or 'text', check for rich content fields to override
-        if (!type || type === 'text') {
-          if (typedMessage['card']) type = 'card';
-          else if (typedMessage['carousel']) type = 'carousel';
-          else if (typedMessage['table']) type = 'table';
-          else if (typedMessage['list']) type = 'list';
-          else if (typedMessage['image']) type = 'image';
-          else if (typedMessage['buttons']) type = 'buttons';
-        }
-
-        const frontendMessage = {
-          // Only set plainText if it's not already present and content is available
-          plainText: (typedMessage.plainText !== undefined
-            ? typedMessage.plainText
-            : typedMessage.content) as string,
-          participant: 'bot',
-          timestamp: new Date().toISOString(),
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          type,
-          ...typedMessage,
-        };
-
-        observer.next({
-          data: frontendMessage,
-        } as MessageEvent);
-      } else {
-        console.log(`[Mock] No active observer for session ${sessionId}`);
-      }
-
-      return { success: true };
-    } catch (error) {
-      console.error('Error saving message to Firestore:', error);
-      throw error;
+  injectMessage(sessionId: string, message: any) {
+    const session = this.getOrCreateSession(sessionId);
+    // session is guaranteed to be defined now, but let's be safe if I change getOrCreateSession later
+    if (session) {
+        const { stream } = session;
+        const messageId = message?.messageId || randomUUID();
+        stream.next({
+            type: 'bot_message',
+            data: { ...message, messageId }
+        });
     }
   }
 
-  /**
-   * Stream updates for a specific session from Firestore
-   */
   getSessionStream(sessionId: string): Observable<MessageEvent> {
-    return new Observable((observer) => {
-      console.log(`Getting session stream for sessionId: '${sessionId}'`);
-      
-      // Register observer
-      this.activeObservers.set(sessionId, observer);
-
-      /*
-      let docRef;
-      try {
-        docRef = this.db.collection('conversations').doc(sessionId);
-      } catch (error) {
-        console.error(`Error creating doc ref for sessionId '${sessionId}':`, error);
-        observer.error(error);
-        return;
-      }
-      const messagesRef = docRef.collection('messages').orderBy('timestamp', 'asc');
-
-      // Listen to the conversation document for status changes
-      const docUnsubscribe = docRef.onSnapshot(
-        (doc) => {
-          if (doc.exists) {
-            const data = doc.data();
-            if (data) {
-              // Emit state update
-              observer.next({
-                type: 'state',
-                data: {
-                  type: 'state_update',
-                  status: data.status,
-                  meta: data.meta,
-                  params: data.params,
-                },
-              } as MessageEvent);
-            }
+    // Ensure session exists
+    if (!this.sessions.has(sessionId)) {
+      this.getOrCreateSession(sessionId);
+    }
+    return this.sessions
+      .get(sessionId)!
+      .stream.asObservable()
+      .pipe(
+        map((event) => {
+          // Handle State Updates
+          if (event.type === 'state_update') {
+            return {
+              type: 'state',
+              data: {
+                type: 'state_update',
+                status: event.state,
+                meta: {},
+                params: event.context,
+              },
+            } as MessageEvent;
           }
-        },
-        (error) => {
-          console.error('Firestore doc snapshot error:', error);
-        }
-      );
 
-      // Listen for new messages
-      const msgUnsubscribe = messagesRef.onSnapshot(
-        (snapshot) => {
-          snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added') {
-              const messageData = change.doc.data();
-              // Emit new message
-              observer.next({
-                data: messageData,
-              } as MessageEvent);
+            // Handle Bot Messages
+            if (event.type === 'bot_message') {
+                const messageData = event.data || {};
+                const mappedData = {
+                    participant: 'bot',
+                    ...messageData
+                };
+
+                // robustly map to plainText if missing
+                if (!mappedData.plainText) {
+                    mappedData.plainText = mappedData.text || mappedData.content || mappedData.output || mappedData.response || mappedData.message;
+                }
+                
+                // Ensure we have a string
+                if (typeof mappedData.plainText !== 'string' && mappedData.plainText) {
+                    if (typeof mappedData.plainText === 'object') {
+                        try {
+                            mappedData.plainText = JSON.stringify(mappedData.plainText);
+                        } catch (e) {
+                            mappedData.plainText = String(mappedData.plainText);
+                        }
+                    } else {
+                        mappedData.plainText = String(mappedData.plainText);
+                    }
+                }
+
+                return {
+                    data: mappedData
+                } as MessageEvent;
             }
-          });
-        },
-        (error) => {
-          console.error('Firestore messages snapshot error:', error);
-        }
-      );
 
-      return () => {
-        docUnsubscribe();
-        msgUnsubscribe();
-      };
-      */
-      console.log(`[Mock] Stream started for session ${sessionId}`);
-      // Keep the connection open
-      return () => {
-        console.log(`[Mock] Stream closed for session ${sessionId}`);
-        this.activeObservers.delete(sessionId);
-      };
-    });
+          // Fallback
+          return { data: event } as MessageEvent;
+        }),
+      );
   }
 }
-

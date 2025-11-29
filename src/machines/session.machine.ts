@@ -129,7 +129,6 @@ export const sessionMachine = setup({
   id: 'CobaltChatbot',
   initial: 'idle',
   context: ({ input }) => {
-    console.log('Initializing context with input:', input);
     return {
       sessionId: input?.sessionId || 'FALLBACK_EMPTY',
       userId: input?.userId || '',

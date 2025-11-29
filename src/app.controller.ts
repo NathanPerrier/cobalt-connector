@@ -12,15 +12,13 @@ import { Observable } from 'rxjs';
 
 @Controller()
 export class AppController {
-  constructor(
-    private readonly appService: AppService,
-  ) {}
+  constructor(private readonly appService: AppService) {}
 
   @Post('trigger')
-  async trigger(@Body() payload: any) {
+  async trigger(@Body() payload: Record<string, unknown>) {
     const { sessionId, ...data } = payload;
-    if (!sessionId) {
-      throw new BadRequestException('sessionId is required');
+    if (typeof sessionId !== 'string') {
+      throw new BadRequestException('sessionId must be a string');
     }
     // Use the new AppService with State Machine
     await this.appService.handleTrigger(sessionId, data);
@@ -28,10 +26,10 @@ export class AppController {
   }
 
   @Post('api/internal/message')
-  async handleInternalMessage(@Body() payload: any) {
+  handleInternalMessage(@Body() payload: Record<string, unknown>) {
     const { sessionId, ...message } = payload;
-    if (!sessionId) {
-      throw new BadRequestException('sessionId is required');
+    if (typeof sessionId !== 'string') {
+      throw new BadRequestException('sessionId must be a string');
     }
     this.appService.injectMessage(sessionId, message);
     return { success: true };

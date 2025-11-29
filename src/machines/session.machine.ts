@@ -2,7 +2,7 @@ import { setup } from 'xstate';
 
 export const sessionMachine = setup({
   types: {
-    context: {} as {},
+    context: {} as object,
     events: {} as
       | { type: 'USER_MESSAGE' }
       | { type: 'ESCALATION_TRIGGER' }

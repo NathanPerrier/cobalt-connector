@@ -14,7 +14,7 @@ export const sessionMachine = setup({
       | { type: 'AGENT_ENDED' }
       | { type: 'USER_ENDED' }
       | { type: 'GHOST_TIMEOUT' }
-      | { type: 'SURVEY_SUBMITTED' }
+      | { type: 'SURVEY_SUBMITTED'; data?: any }
       | { type: 'SURVEY_SKIPPED' }
       | { type: 'SUCCESS' }
       | { type: 'FAILURE' }

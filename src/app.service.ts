@@ -26,6 +26,7 @@ interface BotMessageData {
     chatEnded?: boolean;
     [key: string]: any;
   };
+  richContent?: any[];
   [key: string]: any;
 }
 
@@ -58,6 +59,30 @@ interface TriggerPayload {
   [key: string]: any;
 }
 
+// Define a mapping for special triggers
+const specialTriggerMap = {
+  // Maps to 'USER_ENDED_CHAT' in machine
+  '__endchat__': {
+    n8nUrlKey: 'N8N_END_CHAT_URL',
+    machineEvent: 'USER_ENDED_CHAT',
+    meta: { chatEnded: true },
+  },
+  // Maps to email transcript request
+  '__email_transcript__': {
+    n8nUrlKey: 'N8N_TRANSCRIPT_URL',
+    meta: { emailSent: true }, // Assuming successful call means sent
+  },
+  // Handle greeting separately for direct stream emit
+  '__greeting__': {
+    n8nUrlKey: 'N8N_GREETING_URL',
+  },
+  // Handle survey submission, machine event is SUBMIT_SURVEY
+  'SURVEY_SUBMITTED': {
+    n8nUrlKey: 'N8N_ANALYTICS_URL', // N8N endpoint for analytics
+    machineEvent: 'SUBMIT_SURVEY',
+  },
+};
+
 @Injectable()
 export class AppService {
   private readonly logger = new Logger(AppService.name);
@@ -70,6 +95,7 @@ export class AppService {
 
   private getN8nUrl(key: string): string {
     const url = this.configService.get<string>(key);
+    this.logger.debug(`getN8nUrl: key=${key}, resolvedUrl='${url}'`); // Added debug log
     if (!url) {
       this.logger.warn(`Environment variable ${key} is not set.`);
       return '';
@@ -121,16 +147,27 @@ export class AppService {
 
               this.logger.log(`N8N Response: ${JSON.stringify(response)}`);
 
+              let content = '';
+              let richContent: any[] | undefined = undefined;
+
+              if (typeof response === 'string') {
+                  content = response;
+              } else {
+                  content = response?.plainText || response?.text || response?.message || '';
+                  richContent = response?.richContent; // Extract richContent
+              }
+
+              if (content === 'firstEntryJson') {
+                  content = '';
+              }
+
               return {
-                content:
-                  response?.plainText ||
-                  response?.text ||
-                  response?.message ||
-                  '',
+                content,
                 metadata: {
-                  liveAgentRequested: response?.escalate ?? false,
-                  startSurvey: response?.meta?.chatEnded ?? false,
+                  liveAgentRequested: typeof response === 'object' ? !!response?.escalate : false,
+                  startSurvey: typeof response === 'object' ? !!response?.meta?.chatEnded : false,
                 },
+                richContent: richContent, // Pass through richContent
               };
             } catch (error) {
               clearTimeout(timeoutId);
@@ -185,6 +222,7 @@ export class AppService {
                 plainText: msg.content,
                 messageId: randomUUID(),
                 participant: msg.role,
+                richContent: (msg as any).richContent, // Pass richContent to frontend
               },
             });
           }
@@ -226,43 +264,60 @@ export class AppService {
       }
     }
 
-    if (
-      type &&
-      typeof type === 'string' &&
-      type.trim().toLowerCase() === '__endchat__'
-    ) {
-      type = 'END_CMD'; // Maps to 'USER_ENDED_CHAT' or 'END_CMD' based on machine def
-    }
-
-    this.logger.log(`Received trigger for ${sessionId}: ${type}`);
-
-    // Handle Survey
-    if (type === 'SURVEY_SUBMITTED') {
-      // Call analytics as side effect (or move to machine actor)
-      const url = this.getN8nUrl('N8N_ANALYTICS_URL');
-      if (url) {
-        void this.callN8n(url, { sessionId, ...remainingPayload });
+    // Dynamic handling of special triggers
+    // Ensure type is a string before using it as an index
+    if (typeof type === "string" && specialTriggerMap[type]) {
+      const specialTrigger = specialTriggerMap[type];
+      if (specialTrigger.n8nUrlKey) {
+        const url = this.getN8nUrl(specialTrigger.n8nUrlKey);
+        if (url) {
+          try {
+            const response = await this.callN8n(url, { sessionId, ...remainingPayload });
+            if (response) {
+              const plainText = response?.plainText || response?.text || '';
+              if (plainText !== 'firstEntryJson') {
+                const botMessageData: BotMessageData = {
+                  plainText,
+                  messageId: randomUUID(),
+                  participant: 'bot',
+                  richContent: response?.richContent,
+                  meta: { ...specialTrigger.meta, ...response?.meta },
+                };
+                stream.next({ type: 'bot_message', data: botMessageData });
+              }
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error calling N8n for ${type}: ${(error as Error).message}`,
+            );
+          }
+        }
       }
-      actor.send({ type: 'SUBMIT_SURVEY', data: remainingPayload });
-      return;
-    }
 
-    // Handle Greeting (Special case, not in machine events explicitly?)
-    // If machine is in idle, we might just trigger it manually or send USER_MESSAGE
+      if (specialTrigger.machineEvent) {
+        actor.send({ type: specialTrigger.machineEvent as any, ...remainingPayload });
+      }
+      return; // Handled special trigger, exit
+    }
+    
+    // Handle Greeting (Special case, not in machine events explicitly, directly emits to stream)
     if (type === '__greeting__') {
       const url = this.getN8nUrl('N8N_GREETING_URL');
       if (url) {
         try {
           const response = await this.callN8n(url, { sessionId });
-          // Emit directly to stream as this might be pre-session
-          stream.next({
-            type: 'bot_message',
-            data: {
-              plainText: response?.plainText || response?.text || '',
-              messageId: randomUUID(),
-              participant: 'bot',
-            },
-          });
+          const plainText = response?.plainText || response?.text || '';
+          if (plainText !== 'firstEntryJson') {
+            stream.next({
+              type: 'bot_message',
+              data: {
+                plainText,
+                messageId: randomUUID(),
+                participant: 'bot',
+                richContent: response?.richContent,
+              },
+            });
+          }
         } catch (error) {
           this.logger.error(`
             Error handling greeting: ${(error as Error).message}`);
@@ -271,35 +326,13 @@ export class AppService {
       return;
     }
 
-    // Map to Machine Events
+
+    // Map to Machine Events (default behavior for USER_MESSAGE and fallbacks)
     if (type === 'USER_MESSAGE') {
       actor.send({
         type: 'USER_MESSAGE',
         content: remainingPayload.message as string,
       });
-    } else if (type === 'END_CMD' || type === 'USER_ENDED_CHAT') {
-      const url = this.getN8nUrl('N8N_END_CHAT_URL');
-      if (url) {
-        try {
-          const response = await this.callN8n(url, { sessionId });
-          // Emit response if needed
-          if (response) {
-            stream.next({
-              type: 'bot_message',
-              data: {
-                plainText: response?.plainText || response?.text || '',
-                messageId: randomUUID(),
-                participant: 'bot',
-                meta: { chatEnded: true },
-              },
-            });
-          }
-        } catch (error) {
-          this.logger.error(`
-            Error calling END_CHAT n8n: ${(error as Error).message}`);
-        }
-      }
-      actor.send({ type: 'USER_ENDED_CHAT' });
     } else {
       // Fallback for other events if they match
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument

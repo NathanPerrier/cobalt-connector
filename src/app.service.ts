@@ -94,7 +94,8 @@ export class AppService {
           }: {
             input: { message: string; sessionId: string };
           }) => {
-            this.logger.log(`sendToDialogflow actor input: ${JSON.stringify(input)}`);
+            this.logger.log(`
+              sendToDialogflow actor input: ${JSON.stringify(input)}`);
             const url = this.getN8nUrl('N8N_LLM_URL');
 
             // Timeout logic: Send a message if N8N takes too long (side effect)
@@ -117,7 +118,7 @@ export class AppService {
                 message: input.message,
               });
               clearTimeout(timeoutId);
-              
+
               this.logger.log(`N8N Response: ${JSON.stringify(response)}`);
 
               return {
@@ -161,7 +162,7 @@ export class AppService {
 
     // Pass sessionId as input to initialize machine context
     const actor = createActor(machineWithActors, {
-        input: { sessionId }
+      input: { sessionId },
     });
 
     const sessionInfo: SessionInfo = { actor, stream, lastMessageCount: 0 };
@@ -283,18 +284,19 @@ export class AppService {
           const response = await this.callN8n(url, { sessionId });
           // Emit response if needed
           if (response) {
-             stream.next({
-                type: 'bot_message',
-                data: {
-                    plainText: response?.plainText || response?.text || '',
-                    messageId: randomUUID(),
-                    participant: 'bot',
-                    meta: { chatEnded: true }
-                }
-             });
+            stream.next({
+              type: 'bot_message',
+              data: {
+                plainText: response?.plainText || response?.text || '',
+                messageId: randomUUID(),
+                participant: 'bot',
+                meta: { chatEnded: true },
+              },
+            });
           }
         } catch (error) {
-          this.logger.error(`Error calling END_CHAT n8n: ${(error as Error).message}`);
+          this.logger.error(`
+            Error calling END_CHAT n8n: ${(error as Error).message}`);
         }
       }
       actor.send({ type: 'USER_ENDED_CHAT' });

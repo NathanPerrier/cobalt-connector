@@ -3,7 +3,7 @@ import { setup, assign, fromPromise } from 'xstate';
 export interface ChatMessage {
   role: 'user' | 'bot' | 'agent';
   content: string;
-  timestamp: number;
+  timestamp: string;
 }
 
 export interface ChatContext {
@@ -51,7 +51,7 @@ export const sessionMachine = setup({
             {
               role: 'user',
               content: content as string,
-              timestamp: Date.now(),
+              timestamp: new Date().toISOString(),
             } as ChatMessage,
           ];
         }
@@ -61,7 +61,7 @@ export const sessionMachine = setup({
             {
               role: 'bot',
               content: content as string,
-              timestamp: Date.now(),
+              timestamp: new Date().toISOString(),
             } as ChatMessage,
           ];
         }
@@ -71,7 +71,7 @@ export const sessionMachine = setup({
             {
               role: 'agent',
               content: content as string,
-              timestamp: Date.now(),
+              timestamp: new Date().toISOString(),
             } as ChatMessage,
           ];
         }
@@ -125,7 +125,7 @@ export const sessionMachine = setup({
       event.type === 'BOT_RESPONSE' && !!event.metadata?.startSurvey,
   },
 }).createMachine({
-  /** @xstate-layout N4IgpgJg5mDOIC5QGED2AjAhgGwC7IAtNd1VcA6ASwmzAGIBVAZQFEAlAfQFkWmmBBAOIsA2gAYAuolAAHVLEq5KqAHbSQAD0QBGAEwBWcgE4TJ3QBYAzJYNjtADgA0IAJ6JdRgGzlzAdk-6vvb6lub69p5GAL5RzmhYeITEpBQp-ADGSgBuYOQyAE6o6XAKKlB0EKq5lCpZqADWufE4+EQkZORpmZQ5eYXFsKVQCDV16cTKKuIS0+pyCkqq6loIntreYpbaNuu+HkYezm4IHtrG-oH269rm5va+MXEYLUntqWQZ2bkFRSU15WB8oV8nlsMQAGaofIAW3IzUSbRSnQ+3V6PwGQxGtSKE1U01mSBA80Uk2WOks+l05E8ezEnksXn0uyOiE8fmp+k8uguRnCm20jxA8NayQ6XS+5AgYHSlAUqjoBNk8hJS0JK22lOptPpjOZrh0EXI2m0RnsdjE9givlu9kFwteSPFPVyUplcpUCu0UkJxMWajV5M1NN0dIZAT1xy2hjCWzCFvMugZdueCNF71wn2dkulssmCt03qVC1JAYQvLEPk8lut9nMvK55hZCCslmMIRu+k2ugskWTCRFb2RGdRuUwAHdMCSygBJFQyACuuEYrE4PD4QlEkjmyr9ZLLncr1budc5FibfiMbdjdd09l0XIFsSFKYHjpREvHk6UM7ni+X7A4FgADkABEWBAjhkAACX4AAVRUiR3EtQBWSkm2uewfH0S5uUsKsxGwvsXkRDoiBUSocnyCoqiobFGjhF8HVIzByNQSisTGXEpkkBDfWQzQDVuchfFCNZ7yZGljXQ3wzl5LZuRk41dGNB4n3tEiKDIijAToQFgVBCEoVhdS03ILS2MBDicT9fEtx9JDVRQxBrHMch7CMOlzDWWs9EsYImyuchOzEELORjAwDCI1NB0wGAVGHCV0lUFRpVwSB-1XXgBGEXiHP9Jyy28UxipKkx0O7bxtDEIwEwce5LTEXQotfDpYrAeLM16JKVBSzJ0o3IDYO4LKN1y4tHIEwrjFKmb0O2CttFPS13IMTxNmapiKDajqR3IbrerSiA6AGobgLAiDoLgsaVXyybQgrdy6RCXxO3uPDG31BBthsc4Dm0fwjBU+8No08htoSrN9tS9LmAAs7wMgmD4Lsosbr3e63I8gJLBei0RLZcrApC+8-HsGwQzCEHTNged8hyFw6CYBgACEuGnIambYAA1FgAE1rt3UtPHpYTQjCfQvGqsQPuODsqQigI6S8PQAipwcabpsAGdhzh4YupGBf4lZhdbETbmwyWPJlnRzDsYTKTZeqqzCJq1MY0HwUnbBafoHXhvXHKUcQ8bbpWFzMc87zzF8-zPt8eOjVPAGqxq40YifFRUCleBCRMt5txDvcAFpPCbIvDBm0qrDVpFqFoAu0dLBMmy2S9fH5PxlMaiIaprsV32dBvBYKnYI7ZKOY-0JsKZ8C49gk3z9D79NOu+fo-jKIejecyIx68hxo8TWPjgvLUjHb3wvBsU0l7d-tNqHVfszdfi+ImlYycMG4xFpA54+Na2CAtimw7nsKqt526eGXo-Xan4pxQFnAuXAW9346HWK5CkvJbxrWlnhc8ONhIRAvBcNYXloHmUoig0OOhwi+HINVBknIjCWB-veJwn0bh0JjMaFh4sQiuyePfUG4NV5UL3HcaaldTARHQtLKkAQuRBHqt2RM0CRG7Shn1CAYjSwampMeUIEt-r6C8oA7Y3J6FcmwncMmIZGrQI1vTHRBVOQViZJyYMdJ6QmnQl5S8dIDAhCsCpCk0D0jYHkJAZxk1LRUn5GLMBXhEy+N3lyA4D5wh1igXfYiplPaUG9vkMA0T1SBArFYf+wRL51j2E2AGQU9hXD8tYAwfl05RCAA */
+  /** @xstate-layout N4IgpgJg5mDOIC5QGED2AjAhgGwC7IAtNd1VcA6ASwmzAGIBVAZQFEAlAfQFkWmmBBAOIsA2gAYAuolAAHVLEq5KqAHbSQAD0QBGAEwBWcgE4TRgBwA2M2OsAWA7YA0IAJ6J9Fi+QDsVgMxiYt76pn7eAL7hzmhYeITEpBSJ-ADGSgBuYOQyAE6oKXAKKlB0EKpZlCrpqADWWTE4+EQkZOTJaZSZ2XkFsEVQCJXVKcTKKuISE+pyCkqq6loIFrba5GJ+en5GYhY7QWbObgi2tl4rFt663mLmfhfetpHRGI3xLUlkqRlZufmFlSUwDk8jlsthiAAzVA5AC25AacWaiTanw6XV+vX6gyq+VGqgmUyQIBmijGCx0tjEunItjMtj8+lsHl0uhsukOiD8V3I2k8l30+g2TN2+ieIARTQSrXa33IEDAKUoClUdEJsnkpPmRMW2kp1Np9MZzNZZnZrk5D3InguuksFn0VyMfjFEreyJlnSy8sVypUqu0UiJJLmam1Oi2+rpDOFLLZHOOrKtfIMYlOy10fkeUXFL0RUo+uC+nrlCqVY1VukD6tmZLDCHMhlOZmuRn02jp7YO5uO3iM5DbZgCm28eltWeesUl7xRhbRFRUMgArrg2AqwJ6IIxWJweHwhKJJNMNSHyfWzI2rC2ByszF2jvpLOQzE7dE71m29C7c1P3ajZZUlxXNcNy3dgOBYAA5AARFgoI4ZAAAl+AAFTVYlj1rUBFgdeNtA8Lxgl0ZZLiMEc+S-Sc3VaIgVDKTIclKcoqBxOp4W-KiKBouigWxYY8XGSQ0ODTDNB0Z9bH7JsBV5YiHlw7w-DWQc-EsExLCpS4KNeJFqMwWjUHouggRBMFIWhOFXR0zi9O4nJeNxEMCUPIMMK1LDOROJ9tgsBkDC2G473DCSTjEXk-C2OlNOzSz83ITAYBUWdZRSVQVAVXBIFAndeAEYQhNc0N3PrbxcO0MryFfVsVMZUKbC0vNp3isBEqLLoUpUNK0ky-cIOQ7gcv3fKazc0Titw0LDEzZY8LMPRKVbeqf1aJqWrnch2s6jLNx6vrIJguDEJQobNUK0bMzELydgNJlLEuEru20LlDAMIjaQUiwM1vRaOLihKkuLDb0sy5gwL22D4KQ1DnOrE7T3Oy7ljpG6bXuo49DESaGXMK5n20IIImi9irPIWBFxyTIXDoJgGAAIS4ABJPrqbYAA1FgAE1jpPOtPEUhSTnbKkVN7fRcLCLwHxCawfIxwJdG+4nSfJsBKZBzgwYOyGuZExZeZ8TMbyF5tWzFoilKl1kLFbEcjAV2KIUwShsDJ+g1f6vc8uh9DhtOxZwok58dl8wVtnMeNZv7QIo9TVtzAWsUVFQeV4CJGL3iPH3TwAWgseMc7t6dqFoDPYbrex4wfPsTGu3wBR8+XCco4mPUyEvuaK8KvEDnyHRDgL4wZMxjF5O7U2bKwzAL39-vRHp-mKNudc5OkEeD-yw+7fCaSMN7gnenZtCn6U-2Lb0yxG4SRsWdSeUpEJHt0E4qvjJtb65BT-JU2kj4LVr50A1cBQNyLyvjobQJhyBYwZL2dMlhtDxl2NSdYyxSJGF0HoaSP9yBcQMkCEBvsdA+S8N5cBbYRRcicA9Wk-ZByUkpHhK4vhxw5ibrFFaM8wD4NPLYIw8Y0HeCfKcFY+hfC2jxhYLB7C-7rVSkDCAXC6yPUMIjJkg9XxhDwrhdB1IXqeD0BcaWDcJzaVikrCmCiioeAum2DwDouSvm8L4MW4U1hUiIScJkvIjEsJMdOFI2B5CQAsaNW8SCNhjgfs+UWD0uRVyxuJYI2x2xYIdk7F2wSdQfQuimUK4lGSnD8Hwi6NhYlW2bEyDwBNIhAA */
   id: 'CobaltChatbot',
   initial: 'idle',
   context: ({ input }) => {
@@ -140,7 +140,7 @@ export const sessionMachine = setup({
     idle: {
       on: {
         USER_MESSAGE: {
-          target: 'botActive',
+          target: 'botActive.processing',
           actions: 'addMessageToContext',
         },
       },

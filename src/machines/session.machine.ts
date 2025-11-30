@@ -1,9 +1,13 @@
 import { setup, assign, fromPromise } from 'xstate';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface ChatMessage {
+  id: string;
   role: 'user' | 'bot' | 'agent';
   content: string;
   timestamp: string;
+  richContent?: any[];
+  metadata?: any;
 }
 
 export interface ChatContext {
@@ -13,6 +17,7 @@ export interface ChatContext {
   agentId?: string;
   error?: string;
   surveyData?: any;
+  email?: string;
 }
 
 export type ChatEvent =
@@ -32,7 +37,9 @@ export type ChatEvent =
   | { type: 'LIVE_AGENT_REQUESTED' }
   | { type: 'LIVE_AGENT_ISSUE' }
   | { type: 'EMAIL_TRANSCRIPT_REQUESTED' }
-  | { type: 'EMAIL_PROVIDED'; email: string };
+  | { type: 'EMAIL_PROVIDED'; email: string }
+  | { type: 'EMAIL_VALIDATED'; email: string }
+  | { type: 'EMAIL_INVALID'; message: string };
 
 // 3. Setup the Machine
 export const sessionMachine = setup({
@@ -45,28 +52,36 @@ export const sessionMachine = setup({
     addMessageToContext: assign({
       messages: (
         { context, event },
-        params?: { type?: string; content?: string }
+        params?: { type?: string; content?: string; richContent?: any[]; metadata?: any }
       ) => {
+        console.log('addMessageToContext called with event:', event.type);
         const eventType = params?.type || event.type;
-        const content = params?.content || (event as any).content;
+        const content = params?.content || (event as any).content || (event as any).message;
+        const richContent = params?.richContent || (event as any).richContent;
+        const metadata = params?.metadata || (event as any).metadata;
 
         if (eventType === 'USER_MESSAGE') {
           return [
             ...context.messages,
             {
+              id: uuidv4(),
               role: 'user',
               content: content as string,
               timestamp: new Date().toISOString(),
             } as ChatMessage,
           ];
         }
-        if (eventType === 'BOT_RESPONSE') {
+        if (eventType === 'BOT_RESPONSE' || eventType === 'EMAIL_INVALID') {
+          console.log('Adding BOT_RESPONSE to context. Content:', content);
           return [
             ...context.messages,
             {
+              id: uuidv4(),
               role: 'bot',
               content: content as string,
               timestamp: new Date().toISOString(),
+              richContent: richContent,
+              metadata: metadata,
             } as ChatMessage,
           ];
         }
@@ -74,12 +89,14 @@ export const sessionMachine = setup({
           return [
             ...context.messages,
             {
+              id: uuidv4(),
               role: 'agent',
               content: content as string,
               timestamp: new Date().toISOString(),
             } as ChatMessage,
           ];
         }
+        
         return context.messages;
       },
     }),
@@ -142,6 +159,7 @@ export const sessionMachine = setup({
       return false;
     },
     isSurveyRequested: ({ event }) => {
+      console.log('isSurveyRequested guard checking event:', event.type, (event as any).metadata);
       if (event.type === 'BOT_RESPONSE' && !!event.metadata?.startSurvey)
         return true;
       if (
@@ -152,8 +170,10 @@ export const sessionMachine = setup({
       return false;
     },
     isEmailTranscriptRequested: ({ event }) => {
-      if (event.type === 'BOT_RESPONSE' && !!event.metadata?.emailRequested)
+      if (event.type === 'BOT_RESPONSE' && !!event.metadata?.emailRequested) {
+        console.log('Guard isEmailTranscriptRequested passed');
         return true;
+      }
       if (
         event.type.startsWith('xstate.done.actor.') &&
         !!(event as any).output?.metadata?.emailRequested
@@ -171,7 +191,7 @@ export const sessionMachine = setup({
     },
   },
 }).createMachine({
-  /** @xstate-layout N4IgpgJg5mDOIC5QGED2AjAhgGwC7IAtNd1VcA6ASwmzAGIBVAZQFEAlAfQFkWmmBBAOIsA2gAYAuolAAHVLEq5KqAHbSQAD0QBGACwBWcgE4TRgOwAOXQDZtAJn26xdgDQgAnjuvW75M86ddC20zI1sAX3C3NCw8QmJSCmpaOgAhAHkAFQ42XgAFdIA5VnEpJBA5BSVVdS0EbQBmQ1NzK1sHJ1cPRDtdA3IxS3MGsSajXSMGyOiMHHwiEjIqGnoM7NymAuLRbTLZeUVlNXK67X1m00sbe0dnN08EBrNdcj6fBu0LfRM7CzDpkAxObxRZJFZpLI5fJFEp2PYVA7VY6gU4OYyXNo3Tr3Hr6MzWAbnfR2IwWOwNCwWawAoFxBaJZYpNZQzYw0QNeGVQ41E46c7okxXdq3LoPexGMTkMl2Mwk8bWMJmMw02Z0hJLZL0IQsQrZZBFQosZCZFgAEVK6i5SNqOiaAta1w6d269TJ5H0DRaVI+DQVUyigNV83VYJS2t13F4AmEFvKVqONvq-RaQqxzoeMosr0mYnM52ssom-pmsWDoMZ9AAMgBJABqLA44fWLAAigxeCbzZJLYiE7z6vyU5inaLELpesYbOTc2dzs8VaWQQzNYxWJwdaazRxkAAJfiZWP7Kp9lE6dM9Ix6d1E34WUL6PQL4H0paJfgAYyUADctcII-rCkNY0zUPBFjx5U96ksbRyALT59C+bQ9EGHEEEpQxtDCM5rEcXR-F0bQnzVcs30-SgfzoJtIz4bVQPjCDNB0UIYLgr5EOQsxUNJGC9CMDpyTJPjCIDWkywZUjvyrOsGyo3I2w7EDuzjXsGNOMkWLMeD2KcTiXT0JDyBuKwxFzJp-AsIixNfMgP0k8gZAAJ1Qd84AUFQoDoCBVDAKgVC-VAAGsfNEpdrNwWzyJ8xznNcyh3IQOL-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-hhbfxT0XrdeHGcgrIhAA */
+  /** @xstate-layout N4IgpgJg5mDOIC5QGED2AjAhgGwC7IAtNd1VcA6ASwmzAGIBVAZQFEAlAfQFkWmmBBAOIsA2gAYAuolAAHVLEq5KqAHbSQAD0QBGAGwBWcgE4TRgBxijAJgAsVgMxGbZgDQgAnolv6A7OX322la6PvpiYvoG9gC+0W5oWHiExKQU1LR0AEIA8gAqHGy8AArZAHKs4lJIIHIKSqrqWgjaNoam5pa2Dk6uHoj2+sHkPmK6rVYWej4DsfEYOPhEJGRUNPQ5+YVMJeWi2lWy8orKatVN2vptphbWdo7Obp4I9g7Go2KOYsEXobMgCQtkss0mssnkCsUyhUrAcakd6qdQE1Bo9EM4rNpyFYfEYgvYfD4zNpiX8AUklqlVhkNhDtlDRPZYbVjg0zjpLsZrp07j1UQhghjyNoXmZLjYnD4rPobKT5uSUit0vQhCxSvlkGVSixkLkWAARSrqZkIxo6Aackw3Lr3XpPYWY6747QEqXOqyyxKLBUgjIqtXcXgCYSG6rGk6m5qtC0dW7dB59fnY4yDIz2IliZ1iGy6D2AimK0EAGQAkgA1FgcP2bFgARQYvF1BskRvh4bZzQM0atPPjTxs2iM5FF1ntunMNjsuflwKp9BYXH4xcLHFybH45WQbGLRWrdYb+pDhzqbaRZqulu5cdt-V0Vis5AMRlvY9a9l0Yh8U69M6VjFYnFVPV9Q4ZAAAl+FyQ84WPVlT2aKUu0vRx9D5IlyHFUw73sMRRV0C4vyBSlUn4ABjJQADdlWEf0NVKLUdQPZtQ1bWDNB0Mwx3IQJXRMS4s2xPkLjMe9LHxbM3zTQICPzChiLIyhKLoKsAz4FUoLDVjzjMcUuKCfQByMPi7B8QTtDMQdCXMy4LhsRwQmk71yDkij6BLctK2o3d6yYRt1JYxE2OaMwcV0njDLCYzBJCMxyCzXRtMlMxhO0hyZ2chS5wXJcVzXDctx3CE9x8ximX8iMBwHUL9N4iKBITAddF0dCAgzWyfGFGxCVSoiyFIly-3YDhAOAsCIL8mCAq0-RB246rwv4kyE0CEKzKscwxjvAJupWdLFJpLYdgqJijxZSadCMSwqoMoy6rtYKxHQy1DJaKwcMa7bZN6+S9vBA76REfYWwm8qkpmvTrtqxa7US-xszMNMQkCdEPqcr7+v2yFdhEGEgdOkHONmiGFr5bCOVaDaRh8KI3xR3b1l+zGKkZXGTXbfR4fQjFRQCUIXqsPlsQ4h9LAnKVGsiJLabRjLyBkAAnVASLgBQVCgOgIFUMAqBUcjUAAay1slvx63A+pl+XFeVyhVYQa3dZI4gTkqca8fbJL71e7DQlGCcON0AWXhsIU1slXRPjTXwpdN76tYtpXYBVtWwDlhW5dl7BiAAM1QOWAFtyCNwidulyjZYV+PE9tnXFcd1RneO6DXbgszpqumrifqiZDB8OwgmsDp4c-OJ-jlY3i+jlzyAgMASMoBRVDoF3Web8ywbCm6ofY2xHt4nEvhsSwo7N0vp9n+eVEXwHmOB9tbz5TrQixPeD8sEx3uHwuZNRieZdPueTkXjja+TdAoVTXnNDeAsMxNUMthFoF0OJ6CPjHKeM9-4LxEMzYBy9QEOCamMUYQQJjaAiIZAWtgHoGDwglCc0xIjIMntbGQABXXAbAZ5gAyhAAanAeCqWDA3DSZ14JvgfAfPCd50zTRQgmWwBIHyRGCNpSRRIcwf1HkXT6P9S5MNYewpWXCwTVjpFjQRZV2xmRMG3eakVZGEj8JZe6ZkPwtAYTLXRbCOGGIxiYioV8To4K0lYwm7dbFPAxLiYYIdpQfiJCYNxOiVAsM8QYyi3CfGHVEEAgJJ5QGg2sZA2RF1BzhECBcEhz0abqM9Jo7+x8tYeP0ZwtJRjaSZMwaVG+zdnCGACMKcIwRIjmBkeE4UhhxjmAGBMVozgEkNKSXorxLTmCDWGnqEC4FIJmK6XkkKISbG3X6OEIOhlbzmSlC8UpKMiAqA1pROW6tNba11gbAuGiv43LucnKu9ta4qHrp0kB5xH7tG7FePkMThbWBwhxO8VMYjVLzI5T5qB7mPJUPMl5ht3nIswLc1F3y7Y1wRM7fxjdAleFXs1MpgQDDOA+KZbSQozJhw-BMMcwRrl4q+Q85Oqd05ZxzvnT+uL8X3J+cSp2kgl65KaK9Kx2l8TsxIYMEYNg+TPSHNNLmMKOKtC5WK5OdA3IVmUsWPg9YZWaS8K-IcbVlURGxFmDVGYuLauCGq8IHwUaYBgCobRrkyyms8hwc1TBLXbKBV4OBwx7C2ScAfaarRN7PACDFWy2EJxmRIaKBFcwalf19WAf19TyAkVUBisikAeEqSDKISNFLniNUxLYEw9g42I1slFdmsUHCOAJGEfSPq-UBrLRWmeuBq3KT4XWq1wi3x4SxBhdt2Zphdvqoo2KIw1rxWCBEIe+akUziLSWlB5aVCVsndw5SayNljQbbKxAwl759oURKLoF1bDDuLaO89l7q0rIAqUIC6zRpbMBY26w98zL2CFNNW8PdhJhxRrAZhctKLuDoOGzIXBiz5HDWwcsABNOdEYw6GAuLeOwtDLAMoTFmwwSGvgkMsElPNI8C2OVQ+hsAmHANDWAyNTZpHb7mko10GjF17D330piAkuJnoBEjoi6clJuMYdaX9UxEHH0IAkUKdqwVsTs1GMEe+B8TmdEcNpRBZgUZgFzpgSg2BchyzxbAEictKAyFwDW29YGRNwUlC+plFxUzOiVZOFTY8KAOacy5tzKgPNeZ85pxm9adPWtTamWKcMiFpgcNoAWYwmrcXbRYBwO6ZTRdqXF5zrn3Oee87Fxzzn2EAEdmFwCvXQeci5lxFDYNkUsxYQOBcCmtEhwwPg4RxC-JK-tZF2HvOI1+kQH7VcPaplYdWEuNZSy1+LHWuuwB6-xmdakH1Zcmw9EY2FgpOHCAtgW+kYoDBHA9g+Ax2MipnLthrSWms+fILt473Xq19eyqWfgJY9QQRKizXT5XYPOFss6TqOFhkC1WsYKmdg2UwuxPZ1re3AcHZByTsHp2IdZWXMWUo0PYfjblfFTERI5HLThuqpbExYpIcai4-ScbifxYB8l5rFOjtgE6+D9JDNfEZcR9d1nQ4gidU5-Fbn4T233j7tKTXm07wi-q4l8XwPQdLJp-1jgjPRvw6bJl+dkl0KKvRyMcyopisTlCuVr4LwjDTGN6Ts3h22uW+4ZDunDOYejeZ14XEt2ZufaexxAOQwJkWHbdZTlNWv7-dN0D0P2AmnePl+0q787iSDmmviL4IxpSpmk7IqZvbDIZqfAOOzueuPFogNbKALASfosxfrbFnGZywF7-3wf8WJUOxJdKivEYHCurXfcRNThfAk3xw+YS61DIB-MAejjR61NT9VjP5zdA+U5wFbgbOec3nj7P7c6fJO59-IBUr4RwRRHs-V+jprnyISLrp0Guo1Eqj9jijOJnPFmhvQOdoGJdo7iDOeDGNaLyAmI+FqtYN9hVG+NoCjLAc5vAWlgrnHomFmFiE+MFOmPiJTIJBckKBvnvgfE+JtiftthQMQdgKQRkv9GSkIsvq9EHDurQSQvQR+KZL4EKMFJ1BdGMPDFtN3jAXAXLPTMYu0tkuSrpneFQWIYSBIQSFIfVHGiUqmO1KEH2r4GoltjFuQDwXwWXv9FgjktdghKCkhJgXaKJEOAMEodYELvQn8CoKgNPPANUL9qkN-hGAALSLZPCxFoHtCeGEEqGUhKgxHth2ACzyGxSxLartS+AcFRHjz1JZFwRKacwtw8z6TLZQKdTJhrQcSSjChPjH6lFaKlpxxWyqwVGBR4T4KDCBCWAtBUJFZLYyFSiEiqrYgEgGBzKoJny5JCEWIkKYizROgmAZgpoOBRi4TGZIzbElHQEmylqNLh79HnB8Q4EWbuz9hxrkKiLiI-AhAYjUYGo8pXFeBjBs5q7TCAHaTSGDjULswYgYjxT6DfqnouTfFNrChLptodpr6CSdRBy+B17tT4jmDwzQm-rjpVoQBwlvgKrjgdTSJviCShAxQB5jDrQ9xPg552G1Lqa8Zwl5HrHSjeDRLXgICtARBDi3jvYfj2JGBB5i6F5wm-6wb-4Ak9xAGyIOA0kphKHTLShd7Ml54k4Snk4W4y7U5EnYK6EjAPQWDZhhxOBdxN7hIpixQDAzHYQin6rpE7bakF66mU6XFGlZZIyiHmQZhdyrxAmTH3jmDBDPhSitBikukUCT6v4X4k7El4QtrLrIlxrWleBUxtA4jaTiikx4QowkTYDyCQBwnBQo4tTSgtBsGUn0ZhxNSDDnJ6DKoDhEFqFgBSkkJByKrUkqpOpa46DYilYhB6B3ijnPSxCxBAA */
   id: 'CobaltChatbot',
   initial: 'idle',
   context: ({ input }) => {
@@ -190,9 +210,9 @@ export const sessionMachine = setup({
           actions: 'addMessageToContext',
         },
         BOT_RESPONSE: [
-          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested' },
-          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested' },
-          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested' },
+          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
+          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
+          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
           { target: 'botActive.inputReceived', actions: 'addMessageToContext' },
         ],
         AGENT_CONNECTED: {
@@ -204,7 +224,7 @@ export const sessionMachine = setup({
           actions: 'addMessageToContext',
         },
         LIVE_AGENT_REQUESTED: { target: '#CobaltChatbot.handover' },
-        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.sendingEmail' },
+        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.emailTranscript' },
         USER_ENDED_CHAT: { target: '#CobaltChatbot.closed' },
       },
     },
@@ -222,7 +242,14 @@ export const sessionMachine = setup({
           actions: 'addMessageToContext',
         },
         LIVE_AGENT_REQUESTED: { target: '#CobaltChatbot.handover' },
-        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.sendingEmail' },
+        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.emailTranscript' },
+        USER_ENDED_CHAT: { target: '#CobaltChatbot.closed' },
+        BOT_RESPONSE: [
+          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
+          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
+          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
+          { target: '.inputReceived', actions: 'addMessageToContext' },
+        ],
       },
       states: {
         processing: {
@@ -240,10 +267,12 @@ export const sessionMachine = setup({
                   params: ({
                     event,
                   }: {
-                    event: { output: { content: string } };
+                    event: { output: { content: string; richContent?: any[]; metadata?: any } };
                   }) => ({
                     type: 'BOT_RESPONSE',
                     content: event.output.content,
+                    richContent: event.output.richContent,
+                    metadata: event.output.metadata,
                   }),
                 },
                 // In reality, you'd map the output to a proper event
@@ -344,19 +373,52 @@ export const sessionMachine = setup({
           actions: assign({ surveyData: ({ event }) => event.data }),
         },
         USER_ENDED_CHAT: 'closed',
+        BOT_RESPONSE: { actions: 'addMessageToContext' },
       },
     },
 
     // 6. EMAIL TRANSCRIPT
     emailTranscript: {
+      initial: 'emailRequested',
+      states: {
+        emailRequested: {
+          on: {
+            EMAIL_PROVIDED: {
+              target: 'emailReceived',
+              actions: assign({ email: ({ event }) => event.email }),
+            },
+            USER_MESSAGE: {
+              target: 'emailReceived',
+              actions: assign({ email: ({ event }) => event.content }),
+            },
+            EMAIL_VALIDATED: {
+              target: '#CobaltChatbot.sendingEmail',
+              actions: assign({ email: ({ event }) => event.email }),
+            },
+            EMAIL_INVALID: {
+              target: 'emailRequested',
+              actions: 'addMessageToContext',
+            },
+            BOT_RESPONSE: { actions: 'addMessageToContext' },
+          },
+        },
+        emailReceived: {
+          on: {
+            EMAIL_VALIDATED: {
+              target: '#CobaltChatbot.sendingEmail',
+              actions: assign({ email: ({ event }) => event.email }),
+            },
+            EMAIL_INVALID: {
+              target: 'emailRequested',
+              actions: 'addMessageToContext', // Should probably add a bot message explaining why
+            },
+            BOT_RESPONSE: { actions: 'addMessageToContext' },
+          },
+        },
+      },
       on: {
-        EMAIL_PROVIDED: {
-          target: 'sendingEmail',
-        },
-        USER_MESSAGE: {
-          target: 'sendingEmail', // Assume message is email for now, validation logic needed
-        },
         USER_ENDED_CHAT: 'closed',
+        BOT_RESPONSE: { actions: 'addMessageToContext' },
       },
     },
 
@@ -364,9 +426,9 @@ export const sessionMachine = setup({
       invoke: {
         src: 'sendEmailTranscript',
         input: ({ context, event }) => {
-          const eventContent = (event as any).content || (event as any).email;
-          if (eventContent) {
-            return { email: eventContent, sessionId: context.sessionId };
+          const email = context.email || (event as any).email;
+          if (email) {
+            return { email, sessionId: context.sessionId };
           }
           // Fallback to last user message
           const lastUserMsg = [...context.messages].reverse().find(m => m.role === 'user');
@@ -393,6 +455,12 @@ export const sessionMachine = setup({
     failure: {
       on: {
         USER_MESSAGE: 'botActive', // Try to recover
+        BOT_RESPONSE: [
+          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
+          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
+          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
+          { target: 'botActive.inputReceived', actions: 'addMessageToContext' },
+        ],
       },
     },
   },

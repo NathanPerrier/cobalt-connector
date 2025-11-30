@@ -20,7 +20,7 @@ export type ChatEvent =
   | {
       type: 'BOT_RESPONSE';
       content: string;
-      metadata?: { liveAgentRequested?: boolean; startSurvey?: boolean };
+      metadata?: { liveAgentRequested?: boolean; startSurvey?: boolean; liveAgentIssue?: boolean; emailRequested?: boolean };
       richContent?: any[];
     }
   | { type: 'AGENT_CONNECTED'; agentId: string }
@@ -28,7 +28,11 @@ export type ChatEvent =
   | { type: 'AGENT_ENDED_CHAT' }
   | { type: 'USER_ENDED_CHAT' }
   | { type: 'SUBMIT_SURVEY'; data: any }
-  | { type: 'SYSTEM_ERROR'; message: string };
+  | { type: 'SYSTEM_ERROR'; message: string }
+  | { type: 'LIVE_AGENT_REQUESTED' }
+  | { type: 'LIVE_AGENT_ISSUE' }
+  | { type: 'EMAIL_TRANSCRIPT_REQUESTED' }
+  | { type: 'EMAIL_PROVIDED'; email: string };
 
 // 3. Setup the Machine
 export const sessionMachine = setup({
@@ -119,15 +123,55 @@ export const sessionMachine = setup({
         // Logic from liveagent.js
       },
     ),
+    sendEmailTranscript: fromPromise(
+      async ({ input }: { input: { email: string; sessionId: string } }) => {
+        await Promise.resolve();
+        // Logic to send email transcript
+      },
+    ),
   },
   guards: {
-    isLiveAgentRequested: ({ event }) =>
-      event.type === 'BOT_RESPONSE' && !!event.metadata?.liveAgentRequested,
-    isSurveyRequested: ({ event }) =>
-      event.type === 'BOT_RESPONSE' && !!event.metadata?.startSurvey,
+    isLiveAgentRequested: ({ event }) => {
+      if (event.type === 'BOT_RESPONSE' && !!event.metadata?.liveAgentRequested)
+        return true;
+      if (
+        event.type.startsWith('xstate.done.actor.') &&
+        !!(event as any).output?.metadata?.liveAgentRequested
+      )
+        return true;
+      return false;
+    },
+    isSurveyRequested: ({ event }) => {
+      if (event.type === 'BOT_RESPONSE' && !!event.metadata?.startSurvey)
+        return true;
+      if (
+        event.type.startsWith('xstate.done.actor.') &&
+        !!(event as any).output?.metadata?.startSurvey
+      )
+        return true;
+      return false;
+    },
+    isEmailTranscriptRequested: ({ event }) => {
+      if (event.type === 'BOT_RESPONSE' && !!event.metadata?.emailRequested)
+        return true;
+      if (
+        event.type.startsWith('xstate.done.actor.') &&
+        !!(event as any).output?.metadata?.emailRequested
+      )
+        return true;
+      return false;
+    },
+    isLiveAgentIssue: ({ event }) => {
+      if (
+        event.type.startsWith('xstate.done.actor.') &&
+        !!(event as any).output?.metadata?.liveAgentIssue
+      )
+        return true;
+      return false;
+    },
   },
 }).createMachine({
-  /** @xstate-layout N4IgpgJg5mDOIC5QGED2AjAhgGwC7IAtNd1VcA6ASwmzAGIBVAZQFEAlAfQFkWmmBBAOIsA2gAYAuolAAHVLEq5KqAHbSQAD0QBGAEwBWcgE4TRgBwA2M2OsAWA7YA0IAJ6J9Fi+QDsVgMxiYt76pn7eAL7hzmhYeITEpBSJ-ADGSgBuYOQyAE6oKXAKKlB0EKpZlCrpqADWWTE4+EQkZORJaZSZ2XkFsEVQCJXVKcTKKuISE+pyCkqq6loIFrba5GJ+en5GYhY7QWbObgi2tl4rFt663mLmfhfetpHRGI3xLUlkqRlZufmFlSUwDk8jlsthiAAzVA5AC25AacWaiTanw6XV+vX6gyq+VGqgmUyQIBmijGCx0tjEunItjMtj8+lsHl0uhsukOiD8V3I2k8l30+g2TN2+ieIARTQSrXa33IEDAKUoClUdEJsnkpPmRMW2kp1Np9MZzNZZnZrk5D3InguuksFn0VyMfjFEreyJlnSy8sVypUqu0UiJJLmam1Oi2+rpDOFLLZHOOrKtfIMYlOy10fkeUXFL0RUo+uC+nrlCqVY1VukD6tmZLDCHMhlOZmuRn02jp7YO5uO3iM5DbZgCm28eltWeesUl7xRhbRFRUMgArrg2AqwJ6IIxWJweHwhKJJNMNSHyfWzI2rC2ByszF2jvpLOQzE7dE71m29C7c1P3ajZZUlxXNcNy3dgOBYAA5AARFgoI4ZAAAl+AAFTVYlj1rUBFgdeNtA8Lxgl0ZZLiMEc+S-Sc3VaIgVDKTIclKcoqBxOp4W-KiKBouigWxYY8XGSQ0ODTDNB0Z9bH7JsBV5YiHlw7w-DWQc-EsExLCpS4KNeJFqMwWjUHouggRBMFIWhOFXR0zi9O4nJeNxEMCUPIMMK1LDOROJ9tgsBkDC2G473DCSTjEXk-C2OlNOzSz83ITAYBUWdZRSVQVAVXBIFAndeAEYQhNc0N3PrbxcO0MryFfVsVMZUKbC0vNp3isBEqLLoUpUNK0ky-cIOQ7gcv3fKazc0Titw0LDEzZY8LMPRKVbeqf1aJqWrnch2s6jLNx6vrIJguDEJQobNUK0bMzELydgNJlLEuEru20LlDAMIjaQUiwM1vRaOLihKkuLDb0sy5gwL22D4KQ1DnOrE7T3Oy7ljpG6bXuo49DESaGXMK5n20IIImi9irPIWBFxyTIXDoJgGAAIS4ABJPrqbYAA1FgAE1jpPOtPEUhSTnbKkVN7fRcLCLwHxCawfIxwJdG+4nSfJsBKZBzgwYOyGuZExZeZ8TMbyF5tWzFoilKl1kLFbEcjAV2KIUwShsDJ+g1f6vc8uh9DhtOxZwok58dl8wVtnMeNZv7QIo1TVtzAWsUVFQeV4CJGL3iPH3TwAWgseMc7t6dqFoDPYbrex4wfPsTGu3wBR8+XCco4mPUyEvuaC8KvEDnyHRDgL4wZMxjF5O7U2bKwzAL39-vRHp-mKNudc5OkEeD-yw+7fCaSMN7gnenZtCn6U-2Lb0yxG4SRsWdSeUpEJHt0E4qvjJtb65BT-JU2kj4LVr50A1cBQNyLyvjobQJhyBYwZL2dMlhtDxl2NSdYyxSJGF0HoaSP9yBcQMkCEBvsdA+S8N5cBbYRRcicA9Wk-ZByUkpHhK4vhxw5ibrFFaM8wD4NPLYIw8Y0HeCfKcFY+hfC2jxhYLB7C-7rVSkDCAXC6yPUMIjJkg9XxhDwrhdB1IXqeD0BcaWDcJzaVikrCmCiioeAum2DwDouSvm8L4MW4U1hUiIScJkvIjEsJMdOFI2B5CQAsaNW8SCNhjgfs+UWD0uRVyxuJYI2x2xYIdk7F2wSdQfQuimUK4lGSnD8Hwi6NhYlW2bEyDwBNIhAA */
+  /** @xstate-layout N4IgpgJg5mDOIC5QGED2AjAhgGwC7IAtNd1VcA6ASwmzAGIBVAZQFEAlAfQFkWmmBBAOIsA2gAYAuolAAHVLEq5KqAHbSQAD0QBGACwBWcgE4TRgOwAOXQDZtAJn26xdgDQgAnjuvW75M86ddC20zI1sAX3C3NCw8QmJSCmpaOgAhAHkAFQ42XgAFdIA5VnEpJBA5BSVVdS0EbQBmQ1NzK1sHJ1cPRDtdA3IxS3MGsSajXSMGyOiMHHwiEjIqGnoM7NymAuLRbTLZeUVlNXK67X1m00sbe0dnN08EBrNdcj6fBu0LfRM7CzDpkAxObxRZJFZpLI5fJFEp2PYVA7VY6gU4OYyXNo3Tr3Hr6MzWAbnfR2IwWOwNCwWawAoFxBaJZYpNZQzYw0QNeGVQ41E46c7okxXdq3LoPexGMTkMl2Mwk8bWMJmMw02Z0hJLZL0IQsQrZZBFQosZCZFgAEVK6i5SNqOiaAta1w6d269TJ5H0DRaVI+DQVUyigNV83VYJS2t13F4AmEFvKVqONvq-RaQqxzoeMosr0mYnM52ssom-pmsWDoMZ9AAMgBJABqLA44fWLAAigxeCbzZJLYiE7z6vyU5inaLELpesYbOTc2dzs8VaWQQzNYxWJwdaazRxkAAJfiZWP7Kp9lE6dM9Ix6d1E34WUL6PQL4H0paJfgAYyUADctcII-rCkNY0zUPBFjx5U96ksbRyALT59C+bQ9EGHEEEpQxtDCM5rEcXR-F0bQnzVcs30-SgfzoJtIz4bVQPjCDNB0UIYLgr5EOQsxUNJGC9CMDpyTJPjCIDWkywZUjvyrOsGyo3I2w7EDuzjXsGNOMkWLMeD2KcTiXT0JDyBuKwxFzJp-AsIixNfMgP0k8gZAAJ1Qd84AUFQoDoCBVDAKgVC-VAAGsfNEpdrNwWzyJ8xznNcyh3IQOL-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-hhbfxT0XrdeHGcgrIhAA */
   id: 'CobaltChatbot',
   initial: 'idle',
   context: ({ input }) => {
@@ -145,12 +189,41 @@ export const sessionMachine = setup({
           target: 'botActive.processing',
           actions: 'addMessageToContext',
         },
+        BOT_RESPONSE: [
+          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested' },
+          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested' },
+          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested' },
+          { target: 'botActive.inputReceived', actions: 'addMessageToContext' },
+        ],
+        AGENT_CONNECTED: {
+          target: 'agentActive',
+          actions: 'setAgentId',
+        },
+        AGENT_MESSAGE: {
+          target: 'agentActive',
+          actions: 'addMessageToContext',
+        },
+        LIVE_AGENT_REQUESTED: { target: '#CobaltChatbot.handover' },
+        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.sendingEmail' },
+        USER_ENDED_CHAT: { target: '#CobaltChatbot.closed' },
       },
     },
 
     // 2. BOT ACTIVE: The default mode (replaces !inLiveAgentMode)
     botActive: {
       initial: 'processing',
+      on: {
+        AGENT_CONNECTED: {
+          target: 'agentActive',
+          actions: 'setAgentId',
+        },
+        AGENT_MESSAGE: {
+          target: 'agentActive',
+          actions: 'addMessageToContext',
+        },
+        LIVE_AGENT_REQUESTED: { target: '#CobaltChatbot.handover' },
+        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.sendingEmail' },
+      },
       states: {
         processing: {
           invoke: {
@@ -189,6 +262,7 @@ export const sessionMachine = setup({
               guard: 'isLiveAgentRequested',
             },
             { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested' },
+            { target: '#CobaltChatbot.sendingEmail', guard: 'isEmailTranscriptRequested' },
             { target: 'inputReceived' },
           ],
         },
@@ -198,6 +272,12 @@ export const sessionMachine = setup({
               target: 'processing',
               actions: 'addMessageToContext',
             },
+            BOT_RESPONSE: [
+              { target: '#CobaltChatbot.sendingEmail', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
+              { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
+              { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
+              { actions: 'addMessageToContext' },
+            ],
             // Global exit triggers
             USER_ENDED_CHAT: { target: '#CobaltChatbot.closed' },
           },
@@ -207,14 +287,23 @@ export const sessionMachine = setup({
 
     // 3. HANDOVER: The transition state (formerly implicit in setting inLiveAgentMode)
     handover: {
+      on: {
+        LIVE_AGENT_ISSUE: 'botActive.inputReceived',
+      },
       invoke: {
         src: 'connectToLiveAgent',
         input: ({ context }) => ({ sessionId: context.sessionId }),
-        onDone: {
-          target: 'agentActive', // Or 'agentActive.queueing' if you want to distinguish
-        },
+        onDone: [
+          {
+            target: 'botActive.inputReceived',
+            guard: 'isLiveAgentIssue',
+          },
+          {
+            target: 'agentActive', // Or 'agentActive.queueing' if you want to distinguish
+          },
+        ],
         onError: {
-          target: 'botActive', // Fallback to bot if agent unavailable
+          target: 'botActive.inputReceived', // Fallback to bot if agent unavailable
           actions: 'logError',
         },
       },
@@ -222,6 +311,9 @@ export const sessionMachine = setup({
 
     // 4. AGENT ACTIVE: Talking to human (replaces inLiveAgentMode = true)
     agentActive: {
+      on: {
+        LIVE_AGENT_ISSUE: 'botActive.inputReceived',
+      },
       initial: 'connected',
       states: {
         connected: {
@@ -255,7 +347,44 @@ export const sessionMachine = setup({
       },
     },
 
-    // 6. CLOSED: Final state
+    // 6. EMAIL TRANSCRIPT
+    emailTranscript: {
+      on: {
+        EMAIL_PROVIDED: {
+          target: 'sendingEmail',
+        },
+        USER_MESSAGE: {
+          target: 'sendingEmail', // Assume message is email for now, validation logic needed
+        },
+        USER_ENDED_CHAT: 'closed',
+      },
+    },
+
+    sendingEmail: {
+      invoke: {
+        src: 'sendEmailTranscript',
+        input: ({ context, event }) => {
+          const eventContent = (event as any).content || (event as any).email;
+          if (eventContent) {
+            return { email: eventContent, sessionId: context.sessionId };
+          }
+          // Fallback to last user message
+          const lastUserMsg = [...context.messages].reverse().find(m => m.role === 'user');
+          return {
+            email: lastUserMsg?.content || '',
+            sessionId: context.sessionId
+          };
+        },
+        onDone: {
+          target: 'botActive.inputReceived',
+        },
+        onError: {
+          target: 'botActive.inputReceived', // Fallback to bot if failed
+        },
+      },
+    },
+
+    // 7. CLOSED: Final state
     closed: {
       type: 'final',
     },

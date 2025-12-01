@@ -427,7 +427,7 @@ export const sessionMachine = setup({
         src: 'notifyTimeout',
         input: ({ context }) => ({ sessionId: context.sessionId }),
         onDone: {
-          target: 'closed',
+          target: 'timedOutWaiting',
           actions: [
             {
               type: 'addMessageToContext',
@@ -457,8 +457,24 @@ export const sessionMachine = setup({
           ],
         },
         onError: {
-          target: 'closed',
+          target: 'timedOutWaiting',
         },
+      },
+    },
+
+    timedOutWaiting: {
+      after: {
+        3600000: 'closed', // Auto-close after 1 hour
+      },
+      on: {
+        USER_MESSAGE: {
+          target: 'botActive.processing',
+          actions: 'addMessageToContext',
+        },
+        BOT_RESPONSE: {
+          actions: 'addMessageToContext',
+        },
+        USER_ENDED_CHAT: 'closed',
       },
     },
 

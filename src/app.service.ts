@@ -245,6 +245,13 @@ export class AppService {
     // Handle generic messages in response
     if (Array.isArray(n8nData)) {
       n8nData.forEach((msg) => {
+        if (msg.sent) {
+          this.logger.log(
+            'Message already sent via injectMessage, skipping in mapTriggerToEvent',
+          );
+          return;
+        }
+
         if (msg.type === 'text' && msg.plainText) {
           this.logger.log('Sending BOT_RESPONSE: ' + msg.plainText);
           actor.send({
@@ -293,29 +300,29 @@ export class AppService {
         break;
 
       case 'endchat':
-        if (!messageSent) actor.send({ type: 'USER_ENDED_CHAT' });
-        // If message was sent (e.g. "Goodbye"), we might still want to end the chat?
-        // But the message metadata might have 'chatEnded': true which the frontend handles?
-        // Or the machine state 'closed' handles it?
-        // If we send USER_ENDED_CHAT, it goes to 'closed'.
-        // If we sent BOT_RESPONSE with startSurvey, it goes to 'survey'.
-        // If we want to end chat AFTER survey, we shouldn't send USER_ENDED_CHAT yet.
-        // If n8n response has startSurvey: true, we should probably NOT send USER_ENDED_CHAT immediately if we want the user to see the survey.
-        // But if the trigger is 'endchat', it implies ending.
+        // Check if any message requested a state change that should prevent immediate closing
+        let preventClose = false;
+        if (Array.isArray(n8nData)) {
+          preventClose = n8nData.some(
+            (msg) =>
+              msg.meta?.startSurvey ||
+              msg.metadata?.startSurvey ||
+              msg.meta?.liveAgentRequested ||
+              msg.metadata?.liveAgentRequested ||
+              msg.meta?.emailRequested ||
+              msg.metadata?.emailRequested,
+          );
+        } else if (n8nData) {
+          preventClose =
+            n8nData.meta?.startSurvey ||
+            n8nData.metadata?.startSurvey ||
+            n8nData.meta?.liveAgentRequested ||
+            n8nData.metadata?.liveAgentRequested ||
+            n8nData.meta?.emailRequested ||
+            n8nData.metadata?.emailRequested;
+        }
 
-        // Let's rely on metadata if message was sent.
-        if (messageSent) {
-          // Check if we should force close or if the message metadata handles the flow
-          // If n8nData has 'chatEnded': true in meta, frontend might handle it.
-          // But backend state needs to update.
-          // If message transitioned to 'survey', we are good.
-          // If message transitioned to 'closed' (not possible via BOT_RESPONSE usually), we are good.
-          // If we send USER_ENDED_CHAT now, it might preempt the survey state if not careful.
-          // In 'survey' state, USER_ENDED_CHAT -> 'closed'.
-          // So if we send BOT_RESPONSE (-> survey) then USER_ENDED_CHAT (-> closed), we skip survey?
-          // Yes.
-          // So for endchat, if we sent a message (likely containing survey prompt), we should NOT send USER_ENDED_CHAT automatically.
-        } else {
+        if (!preventClose) {
           actor.send({ type: 'USER_ENDED_CHAT' });
         }
         break;
@@ -323,6 +330,9 @@ export class AppService {
       case 'live_agent':
       case 'live_agent_requested':
         if (!messageSent) actor.send({ type: 'LIVE_AGENT_REQUESTED' });
+        break;
+
+      case 'start_survey':
         break;
 
       default:
@@ -334,11 +344,15 @@ export class AppService {
     const actor = this.getOrCreateSession(sessionId);
     if (message.type === 'agent_message') {
       actor.send({ type: 'AGENT_MESSAGE', content: message.content });
-    } else if (message.type === 'bot_response') {
+    } else {
       actor.send({
         type: 'BOT_RESPONSE',
-        content: message.content,
-        metadata: message.metadata,
+        content: message.plainText || message.content || '',
+        richContent: message.richContent,
+        metadata: message.meta || message.metadata,
+        messageType: message.type,
+        title: message.title,
+        buttons: message.buttons,
       });
     }
   }

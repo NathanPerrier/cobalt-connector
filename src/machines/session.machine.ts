@@ -159,7 +159,7 @@ export const sessionMachine = setup({
       },
     ),
     sendToLiveAgent: fromPromise(
-      async ({ input }: { input: { message: string; agentId: string } }) => {
+      async ({ input }: { input: { message: string; sessionId: string } }) => {
         await Promise.resolve(); // Satisfy require-await
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const dummy = input;
@@ -506,8 +506,8 @@ export const sessionMachine = setup({
         connected: {
           on: {
             USER_MESSAGE: {
+              target: 'sending',
               actions: 'addMessageToContext',
-              // We don't transition state, just side-effect send to agent
             },
             AGENT_MESSAGE: {
               actions: 'addMessageToContext',
@@ -527,6 +527,22 @@ export const sessionMachine = setup({
             },
             USER_ENDED_CHAT: {
               target: '#CobaltChatbot.closed',
+            },
+          },
+        },
+        sending: {
+          invoke: {
+            src: 'sendToLiveAgent',
+            input: ({ context, event }) => ({
+              message: (event as any).content,
+              sessionId: context.sessionId,
+            }),
+            onDone: {
+              target: 'connected',
+            },
+            onError: {
+              target: 'connected',
+              actions: 'logError',
             },
           },
         },

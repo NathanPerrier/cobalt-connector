@@ -116,6 +116,28 @@ export class AppService {
                 }
               },
             ),
+            sendToLiveAgent: fromPromise(
+              async ({
+                input,
+              }: {
+                input: { message: string; sessionId: string };
+              }) => {
+                const n8nUrl = `${this.getN8nUrl()}/live_agent`;
+                try {
+                  await firstValueFrom(
+                    this.httpService.post(n8nUrl, {
+                      sessionId: input.sessionId,
+                      message: input.message,
+                    }),
+                  );
+                } catch (error) {
+                  this.logger.error('Error calling n8n live agent:', error);
+                  // We don't throw here to avoid crashing the actor, or maybe we should?
+                  // If we throw, it might trigger onError in the machine.
+                  throw error;
+                }
+              },
+            ),
           },
         }),
         {

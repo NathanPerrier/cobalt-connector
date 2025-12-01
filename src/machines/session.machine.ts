@@ -232,6 +232,9 @@ export const sessionMachine = setup({
       return false;
     },
     isLiveAgentIssue: ({ event }) => {
+      if (event.type === 'BOT_RESPONSE' && !!event.metadata?.liveAgentIssue) {
+        return true;
+      }
       if (
         event.type.startsWith('xstate.done.actor.') &&
         !!(event as any).output?.metadata?.liveAgentIssue
@@ -463,6 +466,16 @@ export const sessionMachine = setup({
     handover: {
       on: {
         LIVE_AGENT_ISSUE: 'botActive.inputReceived',
+        BOT_RESPONSE: [
+          {
+            target: 'botActive.inputReceived',
+            guard: 'isLiveAgentIssue',
+            actions: 'addMessageToContext',
+          },
+          {
+            actions: 'addMessageToContext',
+          },
+        ],
       },
       invoke: {
         src: 'connectToLiveAgent',
@@ -499,6 +512,16 @@ export const sessionMachine = setup({
             AGENT_MESSAGE: {
               actions: 'addMessageToContext',
             },
+            BOT_RESPONSE: [
+              {
+                target: '#CobaltChatbot.botActive.inputReceived',
+                guard: 'isLiveAgentIssue',
+                actions: 'addMessageToContext',
+              },
+              {
+                actions: 'addMessageToContext',
+              },
+            ],
             AGENT_ENDED_CHAT: {
               target: '#CobaltChatbot.survey',
             },

@@ -31,8 +31,19 @@ export class AppService {
   }
 
   private getOrCreateSession(sessionId: string): Actor<typeof sessionMachine> {
-    if (!this.sessions.has(sessionId)) {
-      const actor = createActor(
+    let actor = this.sessions.get(sessionId);
+
+    if (actor) {
+      const snapshot = actor.getSnapshot();
+      if (snapshot.status === 'done') {
+        this.logger.log(`Session ${sessionId} is closed. Creating new session.`);
+        this.sessions.delete(sessionId);
+        actor = undefined;
+      }
+    }
+
+    if (!actor) {
+      actor = createActor(
         sessionMachine.provide({
           actors: {
             sendToDialogflow: fromPromise(async ({ input }) => {
@@ -288,6 +299,7 @@ export class AppService {
         break;
 
       case 'live_agent':
+      case 'live_agent_requested':
         if (!messageSent) actor.send({ type: 'LIVE_AGENT_REQUESTED' });
         break;
 

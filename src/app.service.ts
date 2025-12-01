@@ -62,6 +62,40 @@ export class AppService {
                 throw error;
               }
             }),
+            notifyTimeout: fromPromise(async ({ input }: { input: { sessionId: string } }) => {
+              const n8nUrl = `${this.getN8nUrl()}/timeout`;
+              this.logger.log(`Calling n8n timeout endpoint: ${n8nUrl} for session ${input.sessionId}`);
+              try {
+                const response = await firstValueFrom(
+                  this.httpService.post(n8nUrl, { sessionId: input.sessionId })
+                );
+                this.logger.log('n8n timeout call successful');
+                
+                const data = response.data;
+                if (Array.isArray(data) && data.length > 0) {
+                    const firstMsg = data[0];
+                    return {
+                        content: firstMsg.plainText || '',
+                        metadata: firstMsg.meta || {},
+                        richContent: firstMsg.richContent,
+                        type: firstMsg.type,
+                        title: firstMsg.title,
+                        buttons: firstMsg.buttons
+                    };
+                }
+                return {
+                    content: data.plainText || data.content || '',
+                    metadata: data.meta || data.metadata || {},
+                    richContent: data.richContent,
+                    type: data.type,
+                    title: data.title,
+                    buttons: data.buttons
+                };
+              } catch (error) {
+                this.logger.error('Error calling n8n timeout:', error);
+                throw error;
+              }
+            }),
           },
         }),
         {

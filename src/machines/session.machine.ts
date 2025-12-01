@@ -58,13 +58,16 @@ export const sessionMachine = setup({
     addMessageToContext: assign({
       messages: (
         { context, event },
-        params?: { type?: string; content?: string; richContent?: any[]; metadata?: any }
+        params?: { type?: string; content?: string; richContent?: any[]; metadata?: any; messageType?: string; title?: string; buttons?: any[] }
       ) => {
         console.log('addMessageToContext called with event:', event.type);
         const eventType = params?.type || event.type;
         const content = params?.content || (event as any).content || (event as any).message;
         const richContent = params?.richContent || (event as any).richContent;
         const metadata = params?.metadata || (event as any).metadata;
+        const messageType = params?.messageType || (event as any).messageType;
+        const title = params?.title || (event as any).title;
+        const buttons = params?.buttons || (event as any).buttons;
 
         if (eventType === 'USER_MESSAGE') {
           return [
@@ -88,9 +91,9 @@ export const sessionMachine = setup({
               timestamp: new Date().toISOString(),
               richContent: richContent,
               metadata: metadata,
-              type: (event as any).messageType,
-              title: (event as any).title,
-              buttons: (event as any).buttons,
+              type: messageType,
+              title: title,
+              buttons: buttons,
             } as ChatMessage,
           ];
         }
@@ -155,6 +158,26 @@ export const sessionMachine = setup({
         // Logic to send email transcript
       },
     ),
+    notifyTimeout: fromPromise(
+      async ({ input }: { input: { sessionId: string } }) => {
+        await Promise.resolve();
+        // Logic to notify timeout
+        return {
+          content: '',
+          metadata: {},
+          richContent: [],
+          type: undefined,
+          title: undefined,
+          buttons: undefined,
+        };
+      },
+    ),
+  },
+  delays: {
+    CHAT_TIMEOUT: () => {
+      const timeout = process.env.CHAT_TIMEOUT;
+      return timeout ? parseInt(timeout, 10) * 60 * 1000 : 30 * 60 * 1000; // Default 30 mins
+    },
   },
   guards: {
     isLiveAgentRequested: ({ event }) => {
@@ -305,6 +328,11 @@ export const sessionMachine = setup({
           ],
         },
         inputReceived: {
+          after: {
+            CHAT_TIMEOUT: {
+              target: '#CobaltChatbot.timeout',
+            },
+          },
           on: {
             USER_MESSAGE: {
               target: 'processing',
@@ -319,6 +347,38 @@ export const sessionMachine = setup({
             // Global exit triggers
             USER_ENDED_CHAT: { target: '#CobaltChatbot.closed' },
           },
+        },
+      },
+    },
+
+    // Timeout State
+    timeout: {
+      invoke: {
+        src: 'notifyTimeout',
+        input: ({ context }) => ({ sessionId: context.sessionId }),
+        onDone: {
+          target: 'closed',
+          actions: [
+            {
+              type: 'addMessageToContext',
+              params: ({
+                event,
+              }: {
+                event: { output: { content: string; richContent?: any[]; metadata?: any; type?: string; title?: string; buttons?: any[] } };
+              }) => ({
+                type: 'BOT_RESPONSE',
+                content: event.output.content,
+                richContent: event.output.richContent,
+                metadata: event.output.metadata,
+                messageType: event.output.type,
+                title: event.output.title,
+                buttons: event.output.buttons
+              }),
+            },
+          ],
+        },
+        onError: {
+          target: 'closed',
         },
       },
     },

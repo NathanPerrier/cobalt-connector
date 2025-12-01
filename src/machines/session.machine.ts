@@ -278,7 +278,7 @@ export const sessionMachine = setup({
             guard: 'isSurveyRequested',
             actions: 'addMessageToContext',
           },
-          { target: 'botActive.inputReceived', actions: 'addMessageToContext' },
+          { actions: 'addMessageToContext' },
         ],
         AGENT_CONNECTED: {
           target: 'agentActive',

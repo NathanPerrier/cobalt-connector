@@ -28,7 +28,12 @@ export type ChatEvent =
   | {
       type: 'BOT_RESPONSE';
       content: string;
-      metadata?: { liveAgentRequested?: boolean; startSurvey?: boolean; liveAgentIssue?: boolean; emailRequested?: boolean };
+      metadata?: {
+        liveAgentRequested?: boolean;
+        startSurvey?: boolean;
+        liveAgentIssue?: boolean;
+        emailRequested?: boolean;
+      };
       richContent?: any[];
       messageType?: string;
       title?: string;
@@ -58,11 +63,20 @@ export const sessionMachine = setup({
     addMessageToContext: assign({
       messages: (
         { context, event },
-        params?: { type?: string; content?: string; richContent?: any[]; metadata?: any; messageType?: string; title?: string; buttons?: any[] }
+        params?: {
+          type?: string;
+          content?: string;
+          richContent?: any[];
+          metadata?: any;
+          messageType?: string;
+          title?: string;
+          buttons?: any[];
+        },
       ) => {
         console.log('addMessageToContext called with event:', event.type);
         const eventType = params?.type || event.type;
-        const content = params?.content || (event as any).content || (event as any).message;
+        const content =
+          params?.content || (event as any).content || (event as any).message;
         const richContent = params?.richContent || (event as any).richContent;
         const metadata = params?.metadata || (event as any).metadata;
         const messageType = params?.messageType || (event as any).messageType;
@@ -108,7 +122,7 @@ export const sessionMachine = setup({
             } as ChatMessage,
           ];
         }
-        
+
         return context.messages;
       },
     }),
@@ -191,7 +205,11 @@ export const sessionMachine = setup({
       return false;
     },
     isSurveyRequested: ({ event }) => {
-      console.log('isSurveyRequested guard checking event:', event.type, (event as any).metadata);
+      console.log(
+        'isSurveyRequested guard checking event:',
+        event.type,
+        (event as any).metadata,
+      );
       if (event.type === 'BOT_RESPONSE' && !!event.metadata?.startSurvey)
         return true;
       if (
@@ -242,9 +260,21 @@ export const sessionMachine = setup({
           actions: 'addMessageToContext',
         },
         BOT_RESPONSE: [
-          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
-          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
-          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
+          {
+            target: '#CobaltChatbot.emailTranscript',
+            guard: 'isEmailTranscriptRequested',
+            actions: 'addMessageToContext',
+          },
+          {
+            target: '#CobaltChatbot.handover',
+            guard: 'isLiveAgentRequested',
+            actions: 'addMessageToContext',
+          },
+          {
+            target: '#CobaltChatbot.survey',
+            guard: 'isSurveyRequested',
+            actions: 'addMessageToContext',
+          },
           { target: 'botActive.inputReceived', actions: 'addMessageToContext' },
         ],
         AGENT_CONNECTED: {
@@ -256,7 +286,9 @@ export const sessionMachine = setup({
           actions: 'addMessageToContext',
         },
         LIVE_AGENT_REQUESTED: { target: '#CobaltChatbot.handover' },
-        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.emailTranscript' },
+        EMAIL_TRANSCRIPT_REQUESTED: {
+          target: '#CobaltChatbot.emailTranscript',
+        },
         USER_ENDED_CHAT: { target: '#CobaltChatbot.closed' },
       },
     },
@@ -274,12 +306,26 @@ export const sessionMachine = setup({
           actions: 'addMessageToContext',
         },
         LIVE_AGENT_REQUESTED: { target: '#CobaltChatbot.handover' },
-        EMAIL_TRANSCRIPT_REQUESTED: { target: '#CobaltChatbot.emailTranscript' },
+        EMAIL_TRANSCRIPT_REQUESTED: {
+          target: '#CobaltChatbot.emailTranscript',
+        },
         USER_ENDED_CHAT: { target: '#CobaltChatbot.closed' },
         BOT_RESPONSE: [
-          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
-          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
-          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
+          {
+            target: '#CobaltChatbot.emailTranscript',
+            guard: 'isEmailTranscriptRequested',
+            actions: 'addMessageToContext',
+          },
+          {
+            target: '#CobaltChatbot.handover',
+            guard: 'isLiveAgentRequested',
+            actions: 'addMessageToContext',
+          },
+          {
+            target: '#CobaltChatbot.survey',
+            guard: 'isSurveyRequested',
+            actions: 'addMessageToContext',
+          },
           { target: '.inputReceived', actions: 'addMessageToContext' },
         ],
       },
@@ -299,7 +345,13 @@ export const sessionMachine = setup({
                   params: ({
                     event,
                   }: {
-                    event: { output: { content: string; richContent?: any[]; metadata?: any } };
+                    event: {
+                      output: {
+                        content: string;
+                        richContent?: any[];
+                        metadata?: any;
+                      };
+                    };
                   }) => ({
                     type: 'BOT_RESPONSE',
                     content: event.output.content,
@@ -323,7 +375,10 @@ export const sessionMachine = setup({
               guard: 'isLiveAgentRequested',
             },
             { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested' },
-            { target: '#CobaltChatbot.sendingEmail', guard: 'isEmailTranscriptRequested' },
+            {
+              target: '#CobaltChatbot.sendingEmail',
+              guard: 'isEmailTranscriptRequested',
+            },
             { target: 'inputReceived' },
           ],
         },
@@ -339,9 +394,21 @@ export const sessionMachine = setup({
               actions: 'addMessageToContext',
             },
             BOT_RESPONSE: [
-              { target: '#CobaltChatbot.sendingEmail', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
-              { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
-              { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
+              {
+                target: '#CobaltChatbot.sendingEmail',
+                guard: 'isEmailTranscriptRequested',
+                actions: 'addMessageToContext',
+              },
+              {
+                target: '#CobaltChatbot.handover',
+                guard: 'isLiveAgentRequested',
+                actions: 'addMessageToContext',
+              },
+              {
+                target: '#CobaltChatbot.survey',
+                guard: 'isSurveyRequested',
+                actions: 'addMessageToContext',
+              },
               { actions: 'addMessageToContext' },
             ],
             // Global exit triggers
@@ -364,7 +431,16 @@ export const sessionMachine = setup({
               params: ({
                 event,
               }: {
-                event: { output: { content: string; richContent?: any[]; metadata?: any; type?: string; title?: string; buttons?: any[] } };
+                event: {
+                  output: {
+                    content: string;
+                    richContent?: any[];
+                    metadata?: any;
+                    type?: string;
+                    title?: string;
+                    buttons?: any[];
+                  };
+                };
               }) => ({
                 type: 'BOT_RESPONSE',
                 content: event.output.content,
@@ -372,7 +448,7 @@ export const sessionMachine = setup({
                 metadata: event.output.metadata,
                 messageType: event.output.type,
                 title: event.output.title,
-                buttons: event.output.buttons
+                buttons: event.output.buttons,
               }),
             },
           ],
@@ -500,10 +576,12 @@ export const sessionMachine = setup({
             return { email, sessionId: context.sessionId };
           }
           // Fallback to last user message
-          const lastUserMsg = [...context.messages].reverse().find(m => m.role === 'user');
+          const lastUserMsg = [...context.messages]
+            .reverse()
+            .find((m) => m.role === 'user');
           return {
             email: lastUserMsg?.content || '',
-            sessionId: context.sessionId
+            sessionId: context.sessionId,
           };
         },
         onDone: {
@@ -525,9 +603,21 @@ export const sessionMachine = setup({
       on: {
         USER_MESSAGE: 'botActive', // Try to recover
         BOT_RESPONSE: [
-          { target: '#CobaltChatbot.emailTranscript', guard: 'isEmailTranscriptRequested', actions: 'addMessageToContext' },
-          { target: '#CobaltChatbot.handover', guard: 'isLiveAgentRequested', actions: 'addMessageToContext' },
-          { target: '#CobaltChatbot.survey', guard: 'isSurveyRequested', actions: 'addMessageToContext' },
+          {
+            target: '#CobaltChatbot.emailTranscript',
+            guard: 'isEmailTranscriptRequested',
+            actions: 'addMessageToContext',
+          },
+          {
+            target: '#CobaltChatbot.handover',
+            guard: 'isLiveAgentRequested',
+            actions: 'addMessageToContext',
+          },
+          {
+            target: '#CobaltChatbot.survey',
+            guard: 'isSurveyRequested',
+            actions: 'addMessageToContext',
+          },
           { target: 'botActive.inputReceived', actions: 'addMessageToContext' },
         ],
       },

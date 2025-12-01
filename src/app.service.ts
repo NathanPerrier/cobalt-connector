@@ -17,7 +17,10 @@ export class AppService {
   ) {}
 
   private getN8nUrl(): string {
-    return this.configService.get<string>('N8N_WEBHOOK_URL') || 'http://localhost:5678/webhook';
+    return (
+      this.configService.get<string>('N8N_WEBHOOK_URL') ||
+      'http://localhost:5678/webhook'
+    );
   }
 
   getSessionStream(sessionId: string): Observable<MessageEvent> {
@@ -45,64 +48,70 @@ export class AppService {
                 // Assuming n8n returns an array of messages or a single message object
                 // We need to normalize it to what the machine expects
                 if (Array.isArray(data) && data.length > 0) {
-                    const firstMsg = data[0];
-                    return {
-                        content: firstMsg.plainText || '',
-                        metadata: firstMsg.meta || {},
-                        richContent: firstMsg.richContent
-                    };
+                  const firstMsg = data[0];
+                  return {
+                    content: firstMsg.plainText || '',
+                    metadata: firstMsg.meta || {},
+                    richContent: firstMsg.richContent,
+                  };
                 }
                 return {
-                    content: data.plainText || data.content || '',
-                    metadata: data.meta || data.metadata || {},
-                    richContent: data.richContent
+                  content: data.plainText || data.content || '',
+                  metadata: data.meta || data.metadata || {},
+                  richContent: data.richContent,
                 };
               } catch (error) {
                 this.logger.error('Error calling n8n LLM:', error);
                 throw error;
               }
             }),
-            notifyTimeout: fromPromise(async ({ input }: { input: { sessionId: string } }) => {
-              const n8nUrl = `${this.getN8nUrl()}/timeout`;
-              this.logger.log(`Calling n8n timeout endpoint: ${n8nUrl} for session ${input.sessionId}`);
-              try {
-                const response = await firstValueFrom(
-                  this.httpService.post(n8nUrl, { sessionId: input.sessionId })
+            notifyTimeout: fromPromise(
+              async ({ input }: { input: { sessionId: string } }) => {
+                const n8nUrl = `${this.getN8nUrl()}/timeout`;
+                this.logger.log(
+                  `Calling n8n timeout endpoint: ${n8nUrl} for session ${input.sessionId}`,
                 );
-                this.logger.log('n8n timeout call successful');
-                
-                const data = response.data;
-                if (Array.isArray(data) && data.length > 0) {
+                try {
+                  const response = await firstValueFrom(
+                    this.httpService.post(n8nUrl, {
+                      sessionId: input.sessionId,
+                    }),
+                  );
+                  this.logger.log('n8n timeout call successful');
+
+                  const data = response.data;
+                  if (Array.isArray(data) && data.length > 0) {
                     const firstMsg = data[0];
                     return {
-                        content: firstMsg.plainText || '',
-                        metadata: firstMsg.meta || {},
-                        richContent: firstMsg.richContent,
-                        type: firstMsg.type,
-                        title: firstMsg.title,
-                        buttons: firstMsg.buttons
+                      content: firstMsg.plainText || '',
+                      metadata: firstMsg.meta || {},
+                      richContent: firstMsg.richContent,
+                      type: firstMsg.type,
+                      title: firstMsg.title,
+                      buttons: firstMsg.buttons,
                     };
-                }
-                return {
+                  }
+                  return {
                     content: data.plainText || data.content || '',
                     metadata: data.meta || data.metadata || {},
                     richContent: data.richContent,
                     type: data.type,
                     title: data.title,
-                    buttons: data.buttons
-                };
-              } catch (error) {
-                this.logger.error('Error calling n8n timeout:', error);
-                throw error;
-              }
-            }),
+                    buttons: data.buttons,
+                  };
+                } catch (error) {
+                  this.logger.error('Error calling n8n timeout:', error);
+                  throw error;
+                }
+              },
+            ),
           },
         }),
         {
           input: { sessionId },
         },
       );
-      
+
       let lastMessageCount = 0;
 
       actor.subscribe((snapshot) => {
@@ -114,17 +123,19 @@ export class AppService {
             data: {
               type: 'state_update',
               status: snapshot.value,
-              meta: {}, 
-              params: {}
-            }
+              meta: {},
+              params: {},
+            },
           } as MessageEvent);
 
           // 2. Send New Messages
           const messages = snapshot.context.messages;
-          this.logger.log(`Session ${sessionId} messages: ${messages.length}, last count: ${lastMessageCount}`);
+          this.logger.log(
+            `Session ${sessionId} messages: ${messages.length}, last count: ${lastMessageCount}`,
+          );
           if (messages.length > lastMessageCount) {
             const newMessages = messages.slice(lastMessageCount);
-            newMessages.forEach(msg => {
+            newMessages.forEach((msg) => {
               if (msg.role !== 'user') {
                 this.logger.log('Sending message to stream: ' + msg.content);
                 const frontendMsg = {
@@ -139,7 +150,7 @@ export class AppService {
                   buttons: msg.buttons,
                 };
                 stream.next({
-                  data: frontendMsg
+                  data: frontendMsg,
                 } as MessageEvent);
               }
             });
@@ -158,7 +169,11 @@ export class AppService {
     const actor = this.getOrCreateSession(sessionId);
     const message = data.message as string;
 
-    if (typeof message === 'string' && message.startsWith('__') && message.endsWith('__')) {
+    if (
+      typeof message === 'string' &&
+      message.startsWith('__') &&
+      message.endsWith('__')
+    ) {
       const trigger = message.slice(2, -2);
 
       if (trigger === 'message_received' || trigger === 'reconnect') {
@@ -169,12 +184,11 @@ export class AppService {
       const n8nUrl = `${this.getN8nUrl()}/${trigger}`;
       try {
         const response = await firstValueFrom(
-            this.httpService.post(n8nUrl, { sessionId, ...data })
+          this.httpService.post(n8nUrl, { sessionId, ...data }),
         );
         this.logger.log(`n8n response for trigger ${trigger}:`, response.data);
-        
-        this.mapTriggerToEvent(actor, trigger, response.data, data);
 
+        this.mapTriggerToEvent(actor, trigger, response.data, data);
       } catch (error) {
         this.logger.error(`Error calling n8n for trigger ${trigger}:`, error);
       }
@@ -184,9 +198,16 @@ export class AppService {
     }
   }
 
-  private mapTriggerToEvent(actor: Actor<typeof sessionMachine>, trigger: string, n8nData: any, inputData: any) {
-    this.logger.log(`Mapping trigger ${trigger} to event. n8nData: ${JSON.stringify(n8nData)}`);
-    
+  private mapTriggerToEvent(
+    actor: Actor<typeof sessionMachine>,
+    trigger: string,
+    n8nData: any,
+    inputData: any,
+  ) {
+    this.logger.log(
+      `Mapping trigger ${trigger} to event. n8nData: ${JSON.stringify(n8nData)}`,
+    );
+
     let messageSent = false;
     // Handle generic messages in response
     if (Array.isArray(n8nData)) {
@@ -201,7 +222,9 @@ export class AppService {
           });
           messageSent = true;
         } else if (msg.type === 'splash') {
-          this.logger.log('Sending SPLASH BOT_RESPONSE: ' + (msg.plainText || msg.text));
+          this.logger.log(
+            'Sending SPLASH BOT_RESPONSE: ' + (msg.plainText || msg.text),
+          );
           actor.send({
             type: 'BOT_RESPONSE',
             content: msg.plainText || msg.text || '',
@@ -209,7 +232,7 @@ export class AppService {
             metadata: msg.meta,
             messageType: 'splash',
             title: msg.title,
-            buttons: msg.buttons
+            buttons: msg.buttons,
           });
           messageSent = true;
         }
@@ -221,17 +244,21 @@ export class AppService {
         if (!messageSent) actor.send({ type: 'EMAIL_TRANSCRIPT_REQUESTED' });
         break;
       case 'email_received':
-         // Check validation from n8n response
-         if (n8nData?.valid === false) {
-             actor.send({ type: 'EMAIL_INVALID', message: n8nData.message || 'Please enter a valid email address' });
-         } else {
-             // Try to find email in n8n response or input data
-             // If the frontend sent the email as 'payload' or 'email' in the trigger request
-             const email = n8nData?.email || inputData?.email || inputData?.payload;
-             actor.send({ type: 'EMAIL_VALIDATED', email: email || '' });
-         }
-         break;
-      
+        // Check validation from n8n response
+        if (n8nData?.valid === false) {
+          actor.send({
+            type: 'EMAIL_INVALID',
+            message: n8nData.message || 'Please enter a valid email address',
+          });
+        } else {
+          // Try to find email in n8n response or input data
+          // If the frontend sent the email as 'payload' or 'email' in the trigger request
+          const email =
+            n8nData?.email || inputData?.email || inputData?.payload;
+          actor.send({ type: 'EMAIL_VALIDATED', email: email || '' });
+        }
+        break;
+
       case 'endchat':
         if (!messageSent) actor.send({ type: 'USER_ENDED_CHAT' });
         // If message was sent (e.g. "Goodbye"), we might still want to end the chat?
@@ -242,26 +269,24 @@ export class AppService {
         // If we want to end chat AFTER survey, we shouldn't send USER_ENDED_CHAT yet.
         // If n8n response has startSurvey: true, we should probably NOT send USER_ENDED_CHAT immediately if we want the user to see the survey.
         // But if the trigger is 'endchat', it implies ending.
-        
+
         // Let's rely on metadata if message was sent.
         if (messageSent) {
-             // Check if we should force close or if the message metadata handles the flow
-             // If n8nData has 'chatEnded': true in meta, frontend might handle it.
-             // But backend state needs to update.
-             // If message transitioned to 'survey', we are good.
-             // If message transitioned to 'closed' (not possible via BOT_RESPONSE usually), we are good.
-             
-             // If we send USER_ENDED_CHAT now, it might preempt the survey state if not careful.
-             // In 'survey' state, USER_ENDED_CHAT -> 'closed'.
-             // So if we send BOT_RESPONSE (-> survey) then USER_ENDED_CHAT (-> closed), we skip survey?
-             // Yes.
-             
-             // So for endchat, if we sent a message (likely containing survey prompt), we should NOT send USER_ENDED_CHAT automatically.
+          // Check if we should force close or if the message metadata handles the flow
+          // If n8nData has 'chatEnded': true in meta, frontend might handle it.
+          // But backend state needs to update.
+          // If message transitioned to 'survey', we are good.
+          // If message transitioned to 'closed' (not possible via BOT_RESPONSE usually), we are good.
+          // If we send USER_ENDED_CHAT now, it might preempt the survey state if not careful.
+          // In 'survey' state, USER_ENDED_CHAT -> 'closed'.
+          // So if we send BOT_RESPONSE (-> survey) then USER_ENDED_CHAT (-> closed), we skip survey?
+          // Yes.
+          // So for endchat, if we sent a message (likely containing survey prompt), we should NOT send USER_ENDED_CHAT automatically.
         } else {
-            actor.send({ type: 'USER_ENDED_CHAT' });
+          actor.send({ type: 'USER_ENDED_CHAT' });
         }
         break;
-        
+
       case 'live_agent':
         if (!messageSent) actor.send({ type: 'LIVE_AGENT_REQUESTED' });
         break;
@@ -272,11 +297,15 @@ export class AppService {
   }
 
   injectMessage(sessionId: string, message: any) {
-     const actor = this.getOrCreateSession(sessionId);
-     if (message.type === 'agent_message') {
-         actor.send({ type: 'AGENT_MESSAGE', content: message.content });
-     } else if (message.type === 'bot_response') {
-         actor.send({ type: 'BOT_RESPONSE', content: message.content, metadata: message.metadata });
-     }
+    const actor = this.getOrCreateSession(sessionId);
+    if (message.type === 'agent_message') {
+      actor.send({ type: 'AGENT_MESSAGE', content: message.content });
+    } else if (message.type === 'bot_response') {
+      actor.send({
+        type: 'BOT_RESPONSE',
+        content: message.content,
+        metadata: message.metadata,
+      });
+    }
   }
 }

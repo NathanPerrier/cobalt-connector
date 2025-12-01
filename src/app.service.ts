@@ -100,6 +100,9 @@ export class AppService {
                   participant: msg.role === 'agent' ? 'agent' : 'bot',
                   timestamp: msg.timestamp,
                   meta: msg.metadata,
+                  type: msg.type,
+                  title: msg.title,
+                  buttons: msg.buttons,
                 };
                 stream.next({
                   data: frontendMsg
@@ -161,6 +164,18 @@ export class AppService {
             content: msg.plainText,
             richContent: msg.richContent,
             metadata: msg.meta,
+          });
+          messageSent = true;
+        } else if (msg.type === 'splash') {
+          this.logger.log('Sending SPLASH BOT_RESPONSE: ' + (msg.plainText || msg.text));
+          actor.send({
+            type: 'BOT_RESPONSE',
+            content: msg.plainText || msg.text || '',
+            richContent: msg.richContent,
+            metadata: msg.meta,
+            messageType: 'splash',
+            title: msg.title,
+            buttons: msg.buttons
           });
           messageSent = true;
         }

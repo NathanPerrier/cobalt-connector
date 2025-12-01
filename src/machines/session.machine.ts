@@ -8,6 +8,9 @@ export interface ChatMessage {
   timestamp: string;
   richContent?: any[];
   metadata?: any;
+  type?: string;
+  title?: string;
+  buttons?: any[];
 }
 
 export interface ChatContext {
@@ -27,6 +30,9 @@ export type ChatEvent =
       content: string;
       metadata?: { liveAgentRequested?: boolean; startSurvey?: boolean; liveAgentIssue?: boolean; emailRequested?: boolean };
       richContent?: any[];
+      messageType?: string;
+      title?: string;
+      buttons?: any[];
     }
   | { type: 'AGENT_CONNECTED'; agentId: string }
   | { type: 'AGENT_MESSAGE'; content: string }
@@ -82,6 +88,9 @@ export const sessionMachine = setup({
               timestamp: new Date().toISOString(),
               richContent: richContent,
               metadata: metadata,
+              type: (event as any).messageType,
+              title: (event as any).title,
+              buttons: (event as any).buttons,
             } as ChatMessage,
           ];
         }

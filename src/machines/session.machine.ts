@@ -33,6 +33,7 @@ export type ChatEvent =
         startSurvey?: boolean;
         liveAgentIssue?: boolean;
         emailRequested?: boolean;
+        chatEnded?: boolean;
       };
       richContent?: any[];
       messageType?: string;
@@ -145,7 +146,7 @@ export const sessionMachine = setup({
         // Logic from dialogflow.js
         return {
           content: 'Hello',
-          metadata: { liveAgentRequested: false, startSurvey: false },
+          metadata: { liveAgentRequested: false, startSurvey: false } as any,
           richContent: [] as any[] | undefined, // Explicitly include richContent in placeholder
         };
       },
@@ -164,6 +165,7 @@ export const sessionMachine = setup({
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const dummy = input;
         // Logic from liveagent.js
+        return { success: true, content: '' };
       },
     ),
     sendEmailTranscript: fromPromise(
@@ -179,10 +181,10 @@ export const sessionMachine = setup({
         return {
           content: '',
           metadata: {},
-          richContent: [],
-          type: undefined,
-          title: undefined,
-          buttons: undefined,
+          richContent: [] as any[],
+          type: undefined as string | undefined,
+          title: undefined as string | undefined,
+          buttons: undefined as any[] | undefined,
         };
       },
     ),
@@ -200,6 +202,16 @@ export const sessionMachine = setup({
       if (
         event.type.startsWith('xstate.done.actor.') &&
         !!(event as any).output?.metadata?.liveAgentRequested
+      )
+        return true;
+      return false;
+    },
+    isChatEnded: ({ event }) => {
+      if (event.type === 'BOT_RESPONSE' && !!event.metadata?.chatEnded)
+        return true;
+      if (
+        event.type.startsWith('xstate.done.actor.') &&
+        !!(event as any).output?.metadata?.chatEnded
       )
         return true;
       return false;
@@ -382,6 +394,7 @@ export const sessionMachine = setup({
               target: '#CobaltChatbot.sendingEmail',
               guard: 'isEmailTranscriptRequested',
             },
+            { target: '#CobaltChatbot.closed', guard: 'isChatEnded' },
             { target: 'inputReceived' },
           ],
         },
@@ -553,9 +566,24 @@ export const sessionMachine = setup({
               message: (event as any).content,
               sessionId: context.sessionId,
             }),
-            onDone: {
-              target: 'connected',
-            },
+            onDone: [
+              {
+                target: 'connected',
+                guard: ({ event }) => !(event.output as any).success,
+                actions: [
+                  {
+                    type: 'addMessageToContext',
+                    params: ({ event }) => ({
+                      type: 'BOT_RESPONSE',
+                      content: (event.output as any).content,
+                    }),
+                  },
+                ],
+              },
+              {
+                target: 'connected',
+              },
+            ],
             onError: {
               target: 'connected',
               actions: 'logError',

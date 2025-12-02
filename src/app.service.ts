@@ -3,7 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { createActor, Actor, fromPromise } from 'xstate';
 import { sessionMachine } from './machines/session.machine';
-import { Subject, Observable, firstValueFrom } from 'rxjs';
+import { Subject, Observable, firstValueFrom, timeout } from 'rxjs';
 
 @Injectable()
 export class AppService {
@@ -21,6 +21,32 @@ export class AppService {
       this.configService.get<string>('N8N_WEBHOOK_URL') ||
       'http://localhost:5678/webhook'
     );
+  }
+
+  private get n8nErrorMessage(): string {
+    return (
+      this.configService.get<string>('N8N_ERROR_MESSAGE') ||
+      'Sorry, I am having trouble connecting right now.'
+    );
+  }
+
+  private async safePostToN8n(
+    endpoint: string,
+    payload: any,
+  ): Promise<{ success: boolean; data?: any; error?: string }> {
+    const n8nUrl = `${this.getN8nUrl()}/${endpoint}`;
+    const timeoutVal = this.configService.get<string>('N8N_TIMEOUT');
+    const timeoutMs = timeoutVal ? parseInt(timeoutVal, 10) : 15000;
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post(n8nUrl, payload).pipe(timeout(timeoutMs)),
+      );
+      return { success: true, data: response.data };
+    } catch (error) {
+      this.logger.error(`Error calling n8n endpoint ${endpoint}:`, error);
+      return { success: false, error: this.n8nErrorMessage };
+    }
   }
 
   getSessionStream(sessionId: string): Observable<MessageEvent> {
@@ -47,73 +73,78 @@ export class AppService {
         sessionMachine.provide({
           actors: {
             sendToDialogflow: fromPromise(async ({ input }) => {
-              const n8nUrl = `${this.getN8nUrl()}/llm`;
-              try {
-                const response = await firstValueFrom(
-                  this.httpService.post(n8nUrl, {
-                    sessionId: input.sessionId,
-                    message: input.message,
-                  }),
+              const result = await this.safePostToN8n('llm', {
+                sessionId: input.sessionId,
+                message: input.message,
+              });
+
+              if (!result.success) {
+                return {
+                  content: result.error!,
+                  metadata: { chatEnded: true },
+                  richContent: [],
+                };
+              }
+
+              const data = result.data;
+              // Assuming n8n returns an array of messages or a single message object
+              // We need to normalize it to what the machine expects
+              if (Array.isArray(data) && data.length > 0) {
+                const firstMsg = data[0];
+                return {
+                  content: firstMsg.plainText || '',
+                  metadata: firstMsg.meta || {},
+                  richContent: firstMsg.richContent,
+                };
+              }
+              return {
+                content: data.plainText || data.content || '',
+                metadata: data.meta || data.metadata || {},
+                richContent: data.richContent,
+              };
+            }),
+            notifyTimeout: fromPromise(
+              async ({ input }: { input: { sessionId: string } }) => {
+                this.logger.log(
+                  `Calling n8n timeout endpoint for session ${input.sessionId}`,
                 );
-                const data = response.data;
-                // Assuming n8n returns an array of messages or a single message object
-                // We need to normalize it to what the machine expects
+                const result = await this.safePostToN8n('timeout', {
+                  sessionId: input.sessionId,
+                });
+
+                if (!result.success) {
+                  return {
+                    content: result.error!,
+                    metadata: { chatEnded: true },
+                    richContent: [],
+                    type: undefined,
+                    title: undefined,
+                    buttons: undefined,
+                  };
+                }
+
+                this.logger.log('n8n timeout call successful');
+                const data = result.data;
+
                 if (Array.isArray(data) && data.length > 0) {
                   const firstMsg = data[0];
                   return {
                     content: firstMsg.plainText || '',
                     metadata: firstMsg.meta || {},
                     richContent: firstMsg.richContent,
+                    type: firstMsg.type,
+                    title: firstMsg.title,
+                    buttons: firstMsg.buttons,
                   };
                 }
                 return {
                   content: data.plainText || data.content || '',
                   metadata: data.meta || data.metadata || {},
                   richContent: data.richContent,
+                  type: data.type,
+                  title: data.title,
+                  buttons: data.buttons,
                 };
-              } catch (error) {
-                this.logger.error('Error calling n8n LLM:', error);
-                throw error;
-              }
-            }),
-            notifyTimeout: fromPromise(
-              async ({ input }: { input: { sessionId: string } }) => {
-                const n8nUrl = `${this.getN8nUrl()}/timeout`;
-                this.logger.log(
-                  `Calling n8n timeout endpoint: ${n8nUrl} for session ${input.sessionId}`,
-                );
-                try {
-                  const response = await firstValueFrom(
-                    this.httpService.post(n8nUrl, {
-                      sessionId: input.sessionId,
-                    }),
-                  );
-                  this.logger.log('n8n timeout call successful');
-
-                  const data = response.data;
-                  if (Array.isArray(data) && data.length > 0) {
-                    const firstMsg = data[0];
-                    return {
-                      content: firstMsg.plainText || '',
-                      metadata: firstMsg.meta || {},
-                      richContent: firstMsg.richContent,
-                      type: firstMsg.type,
-                      title: firstMsg.title,
-                      buttons: firstMsg.buttons,
-                    };
-                  }
-                  return {
-                    content: data.plainText || data.content || '',
-                    metadata: data.meta || data.metadata || {},
-                    richContent: data.richContent,
-                    type: data.type,
-                    title: data.title,
-                    buttons: data.buttons,
-                  };
-                } catch (error) {
-                  this.logger.error('Error calling n8n timeout:', error);
-                  throw error;
-                }
               },
             ),
             sendToLiveAgent: fromPromise(
@@ -122,20 +153,15 @@ export class AppService {
               }: {
                 input: { message: string; sessionId: string };
               }) => {
-                const n8nUrl = `${this.getN8nUrl()}/live_agent`;
-                try {
-                  await firstValueFrom(
-                    this.httpService.post(n8nUrl, {
-                      sessionId: input.sessionId,
-                      message: input.message,
-                    }),
-                  );
-                } catch (error) {
-                  this.logger.error('Error calling n8n live agent:', error);
-                  // We don't throw here to avoid crashing the actor, or maybe we should?
-                  // If we throw, it might trigger onError in the machine.
-                  throw error;
+                const result = await this.safePostToN8n('live_agent', {
+                  sessionId: input.sessionId,
+                  message: input.message,
+                });
+
+                if (!result.success) {
+                  return { success: false, content: result.error || '' };
                 }
+                return { success: true, content: '' };
               },
             ),
           },
@@ -214,17 +240,19 @@ export class AppService {
       }
 
       // Call n8n
-      const n8nUrl = `${this.getN8nUrl()}/${trigger}`;
-      try {
-        const response = await firstValueFrom(
-          this.httpService.post(n8nUrl, { sessionId, ...data }),
-        );
-        this.logger.log(`n8n response for trigger ${trigger}:`, response.data);
+      const result = await this.safePostToN8n(trigger, { sessionId, ...data });
 
-        this.mapTriggerToEvent(actor, trigger, response.data, data);
-      } catch (error) {
-        this.logger.error(`Error calling n8n for trigger ${trigger}:`, error);
+      if (!result.success) {
+        actor.send({
+          type: 'BOT_RESPONSE',
+          content: result.error!,
+          metadata: { chatEnded: true },
+        });
+        return;
       }
+
+      this.logger.log(`n8n response for trigger ${trigger}:`, result.data);
+      this.mapTriggerToEvent(actor, trigger, result.data, data);
     } else {
       // Normal message
       actor.send({ type: 'USER_MESSAGE', content: message });

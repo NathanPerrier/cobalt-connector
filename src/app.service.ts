@@ -439,6 +439,9 @@ export class AppService {
                 content: result.error!,
                 metadata: { chatEnded: true },
                 richContent: [],
+                type: undefined,
+                title: undefined,
+                buttons: undefined,
               };
             }
             return this.normalizeN8nMessage(result.data);

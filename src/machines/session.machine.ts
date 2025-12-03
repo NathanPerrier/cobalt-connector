@@ -147,7 +147,10 @@ export const sessionMachine = setup({
         return {
           content: 'Hello',
           metadata: { liveAgentRequested: false, startSurvey: false } as any,
-          richContent: [] as any[] | undefined, // Explicitly include richContent in placeholder
+          richContent: [] as any[], // Explicitly include richContent in placeholder
+          type: undefined as string | undefined,
+          title: undefined as string | undefined,
+          buttons: undefined as any[] | undefined,
         };
       },
     ),

@@ -5,6 +5,47 @@ import { createActor, Actor, fromPromise } from 'xstate';
 import { sessionMachine } from './machines/session.machine';
 import { Subject, Observable, firstValueFrom, timeout } from 'rxjs';
 
+interface Meta {
+  startSurvey?: boolean;
+  liveAgentRequested?: boolean;
+  emailRequested?: boolean;
+  chatEnded?: boolean;
+  [key: string]: any;
+}
+
+interface N8nMessage {
+  plainText?: string;
+  content?: string;
+  text?: string;
+  richContent?: any[];
+  meta?: Meta;
+  metadata?: Meta;
+  type?: string;
+  title?: string;
+  buttons?: any[];
+  sent?: boolean;
+  valid?: boolean;
+  message?: string;
+  email?: string;
+}
+
+interface N8nResponse {
+  success: boolean;
+  data?: N8nMessage[] | N8nMessage;
+  error?: string;
+}
+
+interface InjectMessagePayload {
+  type?: string;
+  content?: string;
+  plainText?: string;
+  richContent?: any[];
+  meta?: Meta;
+  metadata?: Meta;
+  title?: string;
+  buttons?: any[];
+}
+
 @Injectable()
 export class AppService {
   private readonly logger = new Logger(AppService.name);
@@ -33,7 +74,7 @@ export class AppService {
   private async safePostToN8n(
     endpoint: string,
     payload: any,
-  ): Promise<{ success: boolean; data?: any; error?: string }> {
+  ): Promise<N8nResponse> {
     const n8nUrl = `${this.getN8nUrl()}/${endpoint}`;
     const timeoutVal = this.configService.get<string>('N8N_TIMEOUT');
     const timeoutMs = timeoutVal ? parseInt(timeoutVal, 10) : 15000;
@@ -42,7 +83,10 @@ export class AppService {
       const response = await firstValueFrom(
         this.httpService.post(n8nUrl, payload).pipe(timeout(timeoutMs)),
       );
-      return { success: true, data: response.data };
+      return {
+        success: true,
+        data: response.data as N8nMessage[] | N8nMessage,
+      };
     } catch (error) {
       this.logger.error(`Error calling n8n endpoint ${endpoint}:`, error);
       return { success: false, error: this.n8nErrorMessage };
@@ -73,7 +117,7 @@ export class AppService {
           return undefined;
         }
         this.logger.log(
-          `Session ${sessionId} is closed. Creating new session.`
+          `Session ${sessionId} is closed. Creating new session.`,
         );
         this.sessions.delete(sessionId);
         actor = undefined;
@@ -112,10 +156,11 @@ export class AppService {
                   richContent: firstMsg.richContent,
                 };
               }
+              const msg = data as N8nMessage;
               return {
-                content: data.plainText || data.content || '',
-                metadata: data.meta || data.metadata || {},
-                richContent: data.richContent,
+                content: msg.plainText || msg.content || '',
+                metadata: msg.meta || msg.metadata || {},
+                richContent: msg.richContent,
               };
             }),
             notifyTimeout: fromPromise(
@@ -146,19 +191,20 @@ export class AppService {
                   return {
                     content: firstMsg.plainText || '',
                     metadata: firstMsg.meta || {},
-                    richContent: firstMsg.richContent,
+                    richContent: firstMsg.richContent || [],
                     type: firstMsg.type,
                     title: firstMsg.title,
                     buttons: firstMsg.buttons,
                   };
                 }
+                const msg = data as N8nMessage;
                 return {
-                  content: data.plainText || data.content || '',
-                  metadata: data.meta || data.metadata || {},
-                  richContent: data.richContent,
-                  type: data.type,
-                  title: data.title,
-                  buttons: data.buttons,
+                  content: msg.plainText || msg.content || '',
+                  metadata: msg.meta || msg.metadata || {},
+                  richContent: msg.richContent || [],
+                  type: msg.type,
+                  title: msg.title,
+                  buttons: msg.buttons,
                 };
               },
             ),
@@ -218,7 +264,7 @@ export class AppService {
                   richContent: msg.richContent,
                   participant: msg.role === 'agent' ? 'agent' : 'bot',
                   timestamp: msg.timestamp,
-                  meta: msg.metadata,
+                  meta: msg.metadata as Meta,
                   type: msg.type,
                   title: msg.title,
                   buttons: msg.buttons,
@@ -297,8 +343,8 @@ export class AppService {
   private mapTriggerToEvent(
     actor: Actor<typeof sessionMachine>,
     trigger: string,
-    n8nData: any,
-    inputData: any,
+    n8nData: N8nMessage | N8nMessage[] | undefined,
+    inputData: Record<string, any>,
   ) {
     this.logger.log(
       `Mapping trigger ${trigger} to event. n8nData: ${JSON.stringify(n8nData)}`,
@@ -307,7 +353,7 @@ export class AppService {
     let messageSent = false;
     // Handle generic messages in response
     if (Array.isArray(n8nData)) {
-      n8nData.forEach((msg) => {
+      n8nData.forEach((msg: N8nMessage) => {
         if (msg.sent) {
           this.logger.log(
             'Message already sent via injectMessage, skipping in mapTriggerToEvent',
@@ -346,28 +392,31 @@ export class AppService {
       case 'email_transcript':
         if (!messageSent) actor.send({ type: 'EMAIL_TRANSCRIPT_REQUESTED' });
         break;
-      case 'email_received':
+      case 'email_received': {
+        const msg = Array.isArray(n8nData) ? n8nData[0] : n8nData;
         // Check validation from n8n response
-        if (n8nData?.valid === false) {
+        if (msg?.valid === false) {
           actor.send({
             type: 'EMAIL_INVALID',
-            message: n8nData.message || 'Please enter a valid email address',
+            message: msg.message || 'Please enter a valid email address',
           });
         } else {
           // Try to find email in n8n response or input data
           // If the frontend sent the email as 'payload' or 'email' in the trigger request
-          const email =
-            n8nData?.email || inputData?.email || inputData?.payload;
+          const email = (msg?.email ||
+            inputData?.email ||
+            inputData?.payload) as string;
           actor.send({ type: 'EMAIL_VALIDATED', email: email || '' });
         }
         break;
+      }
 
-      case 'endchat':
+      case 'endchat': {
         // Check if any message requested a state change that should prevent immediate closing
         let preventClose = false;
         if (Array.isArray(n8nData)) {
           preventClose = n8nData.some(
-            (msg) =>
+            (msg: N8nMessage) =>
               msg.meta?.startSurvey ||
               msg.metadata?.startSurvey ||
               msg.meta?.liveAgentRequested ||
@@ -376,19 +425,22 @@ export class AppService {
               msg.metadata?.emailRequested,
           );
         } else if (n8nData) {
-          preventClose =
-            n8nData.meta?.startSurvey ||
-            n8nData.metadata?.startSurvey ||
-            n8nData.meta?.liveAgentRequested ||
-            n8nData.metadata?.liveAgentRequested ||
-            n8nData.meta?.emailRequested ||
-            n8nData.metadata?.emailRequested;
+          const msg = n8nData;
+          preventClose = !!(
+            msg.meta?.startSurvey ||
+            msg.metadata?.startSurvey ||
+            msg.meta?.liveAgentRequested ||
+            msg.metadata?.liveAgentRequested ||
+            msg.meta?.emailRequested ||
+            msg.metadata?.emailRequested
+          );
         }
 
         if (!preventClose) {
           actor.send({ type: 'USER_ENDED_CHAT' });
         }
         break;
+      }
 
       case 'live_agent':
       case 'live_agent_requested':
@@ -403,9 +455,9 @@ export class AppService {
     }
   }
 
-  injectMessage(sessionId: string, message: any) {
+  injectMessage(sessionId: string, message: InjectMessagePayload) {
     this.logger.log(`injectMessage called for ${sessionId}`);
-    const actor = this.getOrCreateSession(sessionId, false);
+    const actor = this.getOrCreateSession(sessionId);
     if (!actor) {
       this.logger.warn(
         `Ignoring injected message for closed/missing session ${sessionId}`,
@@ -414,7 +466,7 @@ export class AppService {
     }
 
     if (message.type === 'agent_message') {
-      actor.send({ type: 'AGENT_MESSAGE', content: message.content });
+      actor.send({ type: 'AGENT_MESSAGE', content: message.content! });
     } else {
       actor.send({
         type: 'BOT_RESPONSE',

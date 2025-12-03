@@ -129,104 +129,7 @@ export class AppService {
         return undefined;
       }
       actor = createActor(
-        sessionMachine.provide({
-          actors: {
-            sendToDialogflow: fromPromise(async ({ input }) => {
-              const result = await this.safePostToN8n('llm', {
-                sessionId: input.sessionId,
-                message: input.message,
-              });
-
-              if (!result.success) {
-                return {
-                  content: result.error!,
-                  metadata: { chatEnded: true },
-                  richContent: [],
-                };
-              }
-
-              const data = result.data;
-              // Assuming n8n returns an array of messages or a single message object
-              // We need to normalize it to what the machine expects
-              if (Array.isArray(data) && data.length > 0) {
-                const firstMsg = data[0];
-                return {
-                  content: firstMsg.plainText || '',
-                  metadata: firstMsg.meta || {},
-                  richContent: firstMsg.richContent,
-                };
-              }
-              const msg = data as N8nMessage;
-              return {
-                content: msg.plainText || msg.content || '',
-                metadata: msg.meta || msg.metadata || {},
-                richContent: msg.richContent,
-              };
-            }),
-            notifyTimeout: fromPromise(
-              async ({ input }: { input: { sessionId: string } }) => {
-                this.logger.log(
-                  `Calling n8n timeout endpoint for session ${input.sessionId}`,
-                );
-                const result = await this.safePostToN8n('timeout', {
-                  sessionId: input.sessionId,
-                });
-
-                if (!result.success) {
-                  return {
-                    content: result.error!,
-                    metadata: { chatEnded: true },
-                    richContent: [],
-                    type: undefined,
-                    title: undefined,
-                    buttons: undefined,
-                  };
-                }
-
-                this.logger.log('n8n timeout call successful');
-                const data = result.data;
-
-                if (Array.isArray(data) && data.length > 0) {
-                  const firstMsg = data[0];
-                  return {
-                    content: firstMsg.plainText || '',
-                    metadata: firstMsg.meta || {},
-                    richContent: firstMsg.richContent || [],
-                    type: firstMsg.type,
-                    title: firstMsg.title,
-                    buttons: firstMsg.buttons,
-                  };
-                }
-                const msg = data as N8nMessage;
-                return {
-                  content: msg.plainText || msg.content || '',
-                  metadata: msg.meta || msg.metadata || {},
-                  richContent: msg.richContent || [],
-                  type: msg.type,
-                  title: msg.title,
-                  buttons: msg.buttons,
-                };
-              },
-            ),
-            sendToLiveAgent: fromPromise(
-              async ({
-                input,
-              }: {
-                input: { message: string; sessionId: string };
-              }) => {
-                const result = await this.safePostToN8n('live_agent', {
-                  sessionId: input.sessionId,
-                  message: input.message,
-                });
-
-                if (!result.success) {
-                  return { success: false, content: result.error || '' };
-                }
-                return { success: true, content: '' };
-              },
-            ),
-          },
-        }),
+        sessionMachine.provide(this.getSessionMachineConfig()),
         {
           input: { sessionId },
         },
@@ -352,41 +255,7 @@ export class AppService {
 
     let messageSent = false;
     // Handle generic messages in response
-    if (Array.isArray(n8nData)) {
-      n8nData.forEach((msg: N8nMessage) => {
-        if (msg.sent) {
-          this.logger.log(
-            'Message already sent via injectMessage, skipping in mapTriggerToEvent',
-          );
-          return;
-        }
-
-        if (msg.type === 'text' && msg.plainText) {
-          this.logger.log('Sending BOT_RESPONSE: ' + msg.plainText);
-          actor.send({
-            type: 'BOT_RESPONSE',
-            content: msg.plainText,
-            richContent: msg.richContent,
-            metadata: msg.meta,
-          });
-          messageSent = true;
-        } else if (msg.type === 'splash') {
-          this.logger.log(
-            'Sending SPLASH BOT_RESPONSE: ' + (msg.plainText || msg.text),
-          );
-          actor.send({
-            type: 'BOT_RESPONSE',
-            content: msg.plainText || msg.text || '',
-            richContent: msg.richContent,
-            metadata: msg.meta,
-            messageType: 'splash',
-            title: msg.title,
-            buttons: msg.buttons,
-          });
-          messageSent = true;
-        }
-      });
-    }
+    messageSent = this.handleN8nResponseMessages(actor, n8nData);
 
     switch (trigger) {
       case 'email_transcript':
@@ -412,29 +281,7 @@ export class AppService {
       }
 
       case 'endchat': {
-        // Check if any message requested a state change that should prevent immediate closing
-        let preventClose = false;
-        if (Array.isArray(n8nData)) {
-          preventClose = n8nData.some(
-            (msg: N8nMessage) =>
-              msg.meta?.startSurvey ||
-              msg.metadata?.startSurvey ||
-              msg.meta?.liveAgentRequested ||
-              msg.metadata?.liveAgentRequested ||
-              msg.meta?.emailRequested ||
-              msg.metadata?.emailRequested,
-          );
-        } else if (n8nData) {
-          const msg = n8nData;
-          preventClose = !!(
-            msg.meta?.startSurvey ||
-            msg.metadata?.startSurvey ||
-            msg.meta?.liveAgentRequested ||
-            msg.metadata?.liveAgentRequested ||
-            msg.meta?.emailRequested ||
-            msg.metadata?.emailRequested
-          );
-        }
+        const preventClose = this.shouldPreventClose(n8nData);
 
         if (!preventClose) {
           actor.send({ type: 'USER_ENDED_CHAT' });
@@ -478,5 +325,167 @@ export class AppService {
         buttons: message.buttons,
       });
     }
+  }
+
+  private normalizeN8nMessage(data: N8nMessage[] | N8nMessage | undefined) {
+    if (Array.isArray(data) && data.length > 0) {
+      const firstMsg = data[0];
+      return {
+        content: firstMsg.plainText || '',
+        metadata: firstMsg.meta || {},
+        richContent: firstMsg.richContent || [],
+        type: firstMsg.type,
+        title: firstMsg.title,
+        buttons: firstMsg.buttons,
+      };
+    }
+    const msg = data as N8nMessage;
+    return {
+      content: msg?.plainText || msg?.content || '',
+      metadata: msg?.meta || msg?.metadata || {},
+      richContent: msg?.richContent || [],
+      type: msg?.type,
+      title: msg?.title,
+      buttons: msg?.buttons,
+    };
+  }
+
+  private shouldPreventClose(
+    n8nData: N8nMessage | N8nMessage[] | undefined,
+  ): boolean {
+    if (Array.isArray(n8nData)) {
+      return n8nData.some(
+        (msg: N8nMessage) =>
+          msg.meta?.startSurvey ||
+          msg.metadata?.startSurvey ||
+          msg.meta?.liveAgentRequested ||
+          msg.metadata?.liveAgentRequested ||
+          msg.meta?.emailRequested ||
+          msg.metadata?.emailRequested,
+      );
+    } else if (n8nData) {
+      const msg = n8nData;
+      return !!(
+        msg.meta?.startSurvey ||
+        msg.metadata?.startSurvey ||
+        msg.meta?.liveAgentRequested ||
+        msg.metadata?.liveAgentRequested ||
+        msg.meta?.emailRequested ||
+        msg.metadata?.emailRequested
+      );
+    }
+    return false;
+  }
+
+  private handleN8nResponseMessages(
+    actor: Actor<typeof sessionMachine>,
+    n8nData: N8nMessage | N8nMessage[] | undefined,
+  ): boolean {
+    let messageSent = false;
+    if (Array.isArray(n8nData)) {
+      n8nData.forEach((msg: N8nMessage) => {
+        if (msg.sent) {
+          this.logger.log(
+            'Message already sent via injectMessage, skipping in mapTriggerToEvent',
+          );
+          return;
+        }
+
+        if (msg.type === 'text' && msg.plainText) {
+          this.logger.log('Sending BOT_RESPONSE: ' + msg.plainText);
+          actor.send({
+            type: 'BOT_RESPONSE',
+            content: msg.plainText,
+            richContent: msg.richContent,
+            metadata: msg.meta,
+          });
+          messageSent = true;
+        } else if (msg.type === 'splash') {
+          this.logger.log(
+            'Sending SPLASH BOT_RESPONSE: ' + (msg.plainText || msg.text),
+          );
+          actor.send({
+            type: 'BOT_RESPONSE',
+            content: msg.plainText || msg.text || '',
+            richContent: msg.richContent,
+            metadata: msg.meta,
+            messageType: 'splash',
+            title: msg.title,
+            buttons: msg.buttons,
+          });
+          messageSent = true;
+        }
+      });
+    }
+    return messageSent;
+  }
+
+  private getSessionMachineConfig() {
+    return {
+      actors: {
+        sendToDialogflow: fromPromise(
+          async ({
+            input,
+          }: {
+            input: { sessionId: string; message: string };
+          }) => {
+            const result = await this.safePostToN8n('llm', {
+              sessionId: input.sessionId,
+              message: input.message,
+            });
+
+            if (!result.success) {
+              return {
+                content: result.error!,
+                metadata: { chatEnded: true },
+                richContent: [],
+              };
+            }
+            return this.normalizeN8nMessage(result.data);
+          },
+        ),
+        notifyTimeout: fromPromise(
+          async ({ input }: { input: { sessionId: string } }) => {
+            this.logger.log(
+              `Calling n8n timeout endpoint for session ${input.sessionId}`,
+            );
+            const result = await this.safePostToN8n('timeout', {
+              sessionId: input.sessionId,
+            });
+
+            if (!result.success) {
+              return {
+                content: result.error!,
+                metadata: { chatEnded: true },
+                richContent: [],
+                type: undefined,
+                title: undefined,
+                buttons: undefined,
+              };
+            }
+
+            this.logger.log('n8n timeout call successful');
+            return this.normalizeN8nMessage(result.data);
+          },
+        ),
+        sendToLiveAgent: fromPromise(
+          async ({
+            input,
+          }: {
+            input: { message: string; sessionId: string };
+          }) => {
+            const result = await this.safePostToN8n('live_agent', {
+              sessionId: input.sessionId,
+              message: input.message,
+            });
+
+            if (!result.success) {
+              return { success: false, content: result.error || '' };
+            }
+            return { success: true, content: '' };
+          },
+        ),
+      },
+    };
   }
 }

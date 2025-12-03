@@ -56,19 +56,34 @@ export class AppService {
     return this.streams.get(sessionId)!.asObservable();
   }
 
-  private getOrCreateSession(sessionId: string): Actor<typeof sessionMachine> {
+  private getOrCreateSession(
+    sessionId: string,
+    revive = true,
+  ): Actor<typeof sessionMachine> | undefined {
+    this.logger.log(
+      `getOrCreateSession called for ${sessionId} with revive=${revive}`,
+    );
     let actor = this.sessions.get(sessionId);
 
     if (actor) {
       const snapshot = actor.getSnapshot();
       if (snapshot.status === 'done') {
-        this.logger.log(`Session ${sessionId} is closed. Creating new session.`);
+        if (!revive) {
+          this.logger.warn(`Session ${sessionId} is closed and revive=false.`);
+          return undefined;
+        }
+        this.logger.log(
+          `Session ${sessionId} is closed. Creating new session.`
+        );
         this.sessions.delete(sessionId);
         actor = undefined;
       }
     }
 
     if (!actor) {
+      if (!revive) {
+        return undefined;
+      }
       actor = createActor(
         sessionMachine.provide({
           actors: {
@@ -225,8 +240,28 @@ export class AppService {
   }
 
   async handleTrigger(sessionId: string, data: Record<string, unknown>) {
-    const actor = this.getOrCreateSession(sessionId);
     const message = data.message as string;
+    let revive = true;
+
+    if (
+      typeof message === 'string' &&
+      message.startsWith('__') &&
+      message.endsWith('__')
+    ) {
+      const trigger = message.slice(2, -2);
+      if (trigger === 'message_received' || trigger === 'reconnect') {
+        revive = false;
+      }
+    }
+
+    const actor = this.getOrCreateSession(sessionId, revive);
+
+    if (!actor) {
+      this.logger.warn(
+        `Ignoring trigger ${message} for closed session ${sessionId}`,
+      );
+      return;
+    }
 
     if (
       typeof message === 'string' &&
@@ -369,7 +404,15 @@ export class AppService {
   }
 
   injectMessage(sessionId: string, message: any) {
-    const actor = this.getOrCreateSession(sessionId);
+    this.logger.log(`injectMessage called for ${sessionId}`);
+    const actor = this.getOrCreateSession(sessionId, false);
+    if (!actor) {
+      this.logger.warn(
+        `Ignoring injected message for closed/missing session ${sessionId}`,
+      );
+      return;
+    }
+
     if (message.type === 'agent_message') {
       actor.send({ type: 'AGENT_MESSAGE', content: message.content });
     } else {
